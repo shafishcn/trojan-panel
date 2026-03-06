@@ -107,14 +107,19 @@ TROJAN_PANEL_HOST=127.0.0.1 TROJAN_PANEL_PORT=8000 .venv/bin/python app.py
 
 - 访问 `/servers` 页面
 - 点击“新增服务器”添加节点
-- 编辑 `ID/名称/检测地址/当前端口/命令模板/状态命令/描述`
+- 编辑 `名称/描述`
+- `ID` 会自动生成，页面中为只读显示
+- `命令模板` 与 `状态命令` 会根据 `ID` 自动生成，页面中为只读显示
+- `当前端口/检测地址/Trojan 密码` 在页面中为只读显示
 - 可在“登录配置”里设置账号和密码
 - 点击“保存配置”写入 `servers.json`
 - 保存成功后页面会自动刷新
 
 注意：
 
-- `command_template` 必须包含 `$1`，用于替换输入端口
+- 自动生成的 `command_template` 形如 `ssh <id> trojan port $1`
+- 自动生成的 `status_command_template` 形如 `ssh <id> trojan status`
+- 若你需要修改 `ID/命令模板/状态命令/当前端口/检测地址/Trojan 密码`，请手工编辑 `servers.json`
 - `id` 不能重复
 
 ### 5.2 单台端口切换

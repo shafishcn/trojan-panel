@@ -43,7 +43,7 @@
           <p>支持命令模板：<code>ssh xxx trojan port $1</code></p>
         </div>
         <div class="config-actions">
-          <button id="add-server-btn" type="button" class="ghost-btn">新增服务器</button>
+          <button id="add-server-btn" type="button" class="ghost-btn" hidden>新增服务器</button>
           <button id="save-servers-btn" type="button">保存配置</button>
         </div>
       </div>
@@ -71,31 +71,31 @@
       <div class="editor-grid">
         <label>
           <span>ID</span>
-          <input data-field="id" type="text" placeholder="例如 hk-main">
+          <input data-field="id" type="text" placeholder="自动生成" readonly>
         </label>
         <label>
           <span>名称</span>
           <input data-field="name" type="text" placeholder="例如 Hong Kong Main">
         </label>
         <label class="full-line">
-          <span>命令模板</span>
-          <input data-field="command_template" type="text" placeholder="ssh root@1.2.3.4 trojan port $1">
+          <span>命令模板（自动生成）</span>
+          <input data-field="command_template" type="text" placeholder="ssh server-id trojan port $1" readonly>
         </label>
         <label class="full-line">
-          <span>状态命令（可选）</span>
-          <input data-field="status_command_template" type="text" placeholder="ssh root@1.2.3.4 trojan status">
+          <span>状态命令（自动生成）</span>
+          <input data-field="status_command_template" type="text" placeholder="ssh server-id trojan status" readonly>
         </label>
         <label>
-          <span>当前端口</span>
-          <input data-field="current_port" type="number" min="1" max="65535" placeholder="例如 443">
+          <span>当前端口（只读）</span>
+          <input data-field="current_port" type="number" min="1" max="65535" placeholder="由系统维护" readonly>
         </label>
         <label>
-          <span>检测地址</span>
-          <input data-field="addr" type="text" placeholder="例如 tj9.tffats.top">
+          <span>检测地址（只读）</span>
+          <input data-field="addr" type="text" placeholder="请在配置文件中维护" readonly>
         </label>
         <label>
-          <span>Trojan 密码</span>
-          <input data-field="trojan_password" type="text" placeholder="例如 tffats110">
+          <span>Trojan 密码（只读）</span>
+          <input data-field="trojan_password" type="text" placeholder="请在配置文件中维护" readonly>
         </label>
         <label>
           <span>描述</span>

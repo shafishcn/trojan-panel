@@ -219,6 +219,17 @@ function parseInitialAuth() {
 
 const initialAuth = parseInitialAuth();
 
+function buildAutoServerId(listEl) {
+  const used = new Set(
+    Array.from(listEl.querySelectorAll('input[data-field="id"]'))
+      .map((el) => (el instanceof HTMLInputElement ? el.value.trim() : ""))
+      .filter((x) => Boolean(x)),
+  );
+  let idx = 1;
+  while (used.has(`srv-${idx}`)) idx += 1;
+  return `srv-${idx}`;
+}
+
 function createEditorItem(server, templateEl) {
   const fragment = templateEl.content.cloneNode(true);
   const item = fragment.querySelector(".editor-item");
@@ -235,17 +246,50 @@ function createEditorItem(server, templateEl) {
     description: item.querySelector('input[data-field="description"]'),
   };
 
-  if (fields.id) fields.id.value = server.id || "";
+  const initialCommandTemplate = String(server.command_template || "").trim();
+  const initialStatusTemplate = String(server.status_command_template || "").trim();
+  const hasSshTarget = String(server.ssh_target || "").trim() !== "";
+  const shouldAutoDerive = !initialCommandTemplate && !initialStatusTemplate && !hasSshTarget;
+  const syncDerivedCommands = () => {
+    if (!shouldAutoDerive) return;
+    const serverId = fields.id ? fields.id.value.trim() : "";
+    if (fields.commandTemplate) {
+      fields.commandTemplate.value = serverId ? `ssh ${serverId} trojan port $1` : "";
+    }
+    if (fields.statusTemplate) {
+      fields.statusTemplate.value = serverId ? `ssh ${serverId} trojan status` : "";
+    }
+  };
+
+  if (fields.id) {
+    fields.id.value = server.id || "";
+    fields.id.readOnly = true;
+  }
   if (fields.name) fields.name.value = server.name || "";
   if (fields.commandTemplate) {
     const fallback = server.ssh_target ? `ssh ${server.ssh_target} trojan port $1` : "";
     fields.commandTemplate.value = server.command_template || fallback;
+    fields.commandTemplate.readOnly = true;
   }
-  if (fields.statusTemplate) fields.statusTemplate.value = server.status_command_template || "";
-  if (fields.currentPort) fields.currentPort.value = server.current_port || "";
-  if (fields.addr) fields.addr.value = server.addr || "";
-  if (fields.trojanPassword) fields.trojanPassword.value = server.trojan_password || "";
+  if (fields.statusTemplate) {
+    fields.statusTemplate.value = server.status_command_template || "";
+    fields.statusTemplate.readOnly = true;
+  }
+  if (fields.currentPort) {
+    fields.currentPort.value = server.current_port || "";
+    fields.currentPort.readOnly = true;
+  }
+  if (fields.addr) {
+    fields.addr.value = server.addr || "";
+    fields.addr.readOnly = true;
+  }
+  if (fields.trojanPassword) {
+    fields.trojanPassword.value = server.trojan_password || "";
+    fields.trojanPassword.readOnly = true;
+  }
   if (fields.description) fields.description.value = server.description || "";
+
+  syncDerivedCommands();
 
   const removeBtn = item.querySelector(".remove-server-btn");
   if (removeBtn) {
@@ -299,8 +343,9 @@ function initConfigEditor() {
   if (authPasswordEl) authPasswordEl.value = initialAuth.password || "";
 
   addBtn.addEventListener("click", () => {
+    const autoId = buildAutoServerId(listEl);
     const node = createEditorItem(
-      { id: "", name: "", command_template: "", status_command_template: "", current_port: "", addr: "", trojan_password: "", description: "" },
+      { id: autoId, name: "", command_template: "", status_command_template: "", current_port: "", addr: "", trojan_password: "", description: "" },
       templateEl,
     );
     if (node) listEl.appendChild(node);

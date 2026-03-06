@@ -462,6 +462,18 @@ button,
   box-shadow: 0 0 0 3px rgba(14, 143, 138, 0.16);
 }
 
+.editor-grid input[readonly] {
+  border-style: dashed;
+  background: #f6f8fb;
+  color: #617089;
+  cursor: not-allowed;
+}
+
+.editor-grid input[readonly]:focus {
+  border-color: var(--line-strong);
+  box-shadow: none;
+}
+
 .quick-list {
   display: flex;
   flex-wrap: wrap;
