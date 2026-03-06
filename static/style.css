@@ -496,7 +496,8 @@ button,
 /* Primary actions: save config / generate subscription / switch port */
 #save-servers-btn,
 #sub-generate-btn,
-.submit-btn {
+.submit-btn,
+.login-form button {
   border: 1px solid #22324f;
   border-radius: 14px;
   background:
@@ -512,7 +513,8 @@ button,
 
 #save-servers-btn:hover,
 #sub-generate-btn:hover,
-.submit-btn:hover {
+.submit-btn:hover,
+.login-form button:hover {
   border-color: #1a5f86;
   filter: brightness(1.04);
   box-shadow:
@@ -522,7 +524,8 @@ button,
 
 #save-servers-btn:active,
 #sub-generate-btn:active,
-.submit-btn:active {
+.submit-btn:active,
+.login-form button:active {
   transform: translateY(0);
   filter: brightness(0.98);
   box-shadow:
@@ -532,7 +535,8 @@ button,
 
 #save-servers-btn:focus-visible,
 #sub-generate-btn:focus-visible,
-.submit-btn:focus-visible {
+.submit-btn:focus-visible,
+.login-form button:focus-visible {
   outline: none;
   box-shadow:
     0 0 0 3px rgba(7, 122, 118, 0.26),
@@ -541,7 +545,8 @@ button,
 
 #save-servers-btn:disabled,
 #sub-generate-btn:disabled,
-.submit-btn:disabled {
+.submit-btn:disabled,
+.login-form button:disabled {
   border-color: #7e8ba0;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0) 40%),

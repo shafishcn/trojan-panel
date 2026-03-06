@@ -180,6 +180,7 @@ cd /opt/trojan-panel
 # 将项目文件放到该目录（git clone 或拷贝）
 uv venv .venv
 uv pip install --python .venv/bin/python -r requirements.txt
+uv pip install --python .venv/bin/python gunicorn
 cp servers.example.json servers.json
 ```
 
@@ -194,7 +195,24 @@ cp servers.example.json servers.json
 
 `TROJAN_PANEL_SECRET_KEY` 用于 Flask 会话签名，生产环境不要使用默认值。
 
-### 6.3 配置 systemd 自启动
+### 6.3 使用 WSGI 启动（Gunicorn）
+
+先手动验证 WSGI 启动是否正常：
+
+```bash
+cd /opt/trojan-panel
+TROJAN_PANEL_CONFIG=/opt/trojan-panel/servers.json \
+TROJAN_PANEL_SECRET_KEY=replace-with-a-long-random-string \
+.venv/bin/gunicorn --workers 2 --threads 4 --bind 127.0.0.1:8000 --timeout 60 app:app
+```
+
+说明：
+
+- `app:app` 表示加载 `app.py` 中的 Flask 实例 `app`
+- `--workers 2 --threads 4` 为中小规模机器的通用起步值
+- 生产环境建议使用 Gunicorn（WSGI），不要直接用 `python app.py`
+
+### 6.4 配置 systemd 自启动（WSGI）
 
 创建服务文件 `/etc/systemd/system/trojan-panel.service`：
 
@@ -207,11 +225,9 @@ After=network.target
 Type=simple
 User=ubuntu
 WorkingDirectory=/opt/trojan-panel
-Environment=TROJAN_PANEL_HOST=127.0.0.1
-Environment=TROJAN_PANEL_PORT=8000
 Environment=TROJAN_PANEL_CONFIG=/opt/trojan-panel/servers.json
 Environment=TROJAN_PANEL_SECRET_KEY=replace-with-a-long-random-string
-ExecStart=/opt/trojan-panel/.venv/bin/python /opt/trojan-panel/app.py
+ExecStart=/opt/trojan-panel/.venv/bin/gunicorn --workers 2 --threads 4 --bind 127.0.0.1:8000 --timeout 60 --access-logfile - --error-logfile - app:app
 Restart=always
 RestartSec=3
 
@@ -233,7 +249,7 @@ sudo systemctl status trojan-panel
 sudo journalctl -u trojan-panel -f
 ```
 
-### 6.4 配置 Nginx 反向代理
+### 6.5 配置 Nginx 反向代理
 
 建议只让面板监听本机 `127.0.0.1:8000`，对外由 Nginx 暴露。
 
@@ -261,17 +277,18 @@ sudo systemctl reload nginx
 
 如需公网访问，建议配合 HTTPS（例如 `certbot`）并限制来源 IP。
 
-### 6.5 升级发布流程
+### 6.6 升级发布流程
 
 ```bash
 cd /opt/trojan-panel
 # 更新代码（按你的实际方式）
 uv pip install --python .venv/bin/python -r requirements.txt
+uv pip install --python .venv/bin/python gunicorn
 sudo systemctl restart trojan-panel
 sudo systemctl status trojan-panel
 ```
 
-### 6.6 配置生效说明
+### 6.7 配置生效说明
 
 - 修改 `servers.json` 后不需要重启服务，页面下一次请求会读取新配置。
 - 如果你修改的是 systemd 环境变量或服务文件，则必须执行：
