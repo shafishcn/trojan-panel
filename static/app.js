@@ -1,0 +1,410 @@
+function formatOutput(res) {
+  const lines = [];
+  lines.push(`status: ${res.ok ? "success" : "failed"}`);
+  if (res.exec_ok !== undefined) lines.push(`command ok: ${res.exec_ok ? "yes" : "no"}`);
+  if (res.service_status) lines.push(`service: ${res.service_status}`);
+  if (res.service_active_line) lines.push(`active: ${res.service_active_line}`);
+  if (res.current_port !== undefined && res.current_port !== null) lines.push(`current port: ${res.current_port}`);
+  if (Array.isArray(res.quick_ports) && res.quick_ports.length) lines.push(`quick next: ${res.quick_ports.join(", ")}`);
+  if (res.network_status) lines.push(`network: ${res.network_status}`);
+  if (res.network_target) lines.push(`network target: ${res.network_target}`);
+  if (res.network_message) lines.push(`network message: ${res.network_message}`);
+  if (res.command) lines.push(`command: ${res.command}`);
+  if (res.returncode !== undefined) lines.push(`return code: ${res.returncode}`);
+  if (res.message) lines.push(`message: ${res.message}`);
+  if (res.stdout) lines.push(`stdout:\n${res.stdout}`);
+  if (res.stderr) lines.push(`stderr:\n${res.stderr}`);
+  return lines.join("\n");
+}
+
+class UnauthorizedError extends Error {}
+
+function redirectToLogin() {
+  const next = `${window.location.pathname}${window.location.search}`;
+  window.location.href = `/login?next=${encodeURIComponent(next)}`;
+}
+
+async function parseApiResponse(resp) {
+  if (resp.status === 401) {
+    redirectToLogin();
+    throw new UnauthorizedError("Unauthorized");
+  }
+  let data = {};
+  try {
+    data = await resp.json();
+  } catch (_err) {
+    data = {};
+  }
+  if (!data || typeof data !== "object") data = {};
+  if (data.ok === undefined) data.ok = resp.ok;
+  if (!data.message && !resp.ok) data.message = `HTTP ${resp.status}`;
+  return data;
+}
+
+function markResult(resultEl, ok, text) {
+  resultEl.classList.remove("ok", "err");
+  if (ok === true) resultEl.classList.add("ok");
+  if (ok === false) resultEl.classList.add("err");
+  resultEl.textContent = text;
+}
+
+function setButtonLoading(button, loadingText) {
+  const prev = button.textContent;
+  button.disabled = true;
+  button.textContent = loadingText;
+  return () => {
+    button.disabled = false;
+    button.textContent = prev;
+  };
+}
+
+function renderQuickButtons(card, quickPorts) {
+  const listEl = card.querySelector(".quick-list");
+  if (!listEl) return;
+  listEl.innerHTML = "";
+  if (!Array.isArray(quickPorts) || !quickPorts.length) return;
+
+  for (const p of quickPorts) {
+    const btn = document.createElement("button");
+    btn.className = "quick-btn";
+    btn.type = "button";
+    btn.dataset.port = String(p);
+    btn.textContent = String(p);
+    listEl.appendChild(btn);
+  }
+}
+
+function applyRuntimeToCard(card, data) {
+  if (!card || !data) return;
+  const currentEl = card.querySelector(".current-port-value");
+  if (currentEl && data.current_port !== undefined) {
+    currentEl.textContent = data.current_port === null ? "未知" : String(data.current_port);
+  }
+  if (data.quick_ports !== undefined) {
+    renderQuickButtons(card, data.quick_ports);
+  }
+}
+
+function applyNetworkToCard(card, data) {
+  if (!card || !data) return;
+  const networkEl = card.querySelector(".network-value");
+  if (!networkEl) return;
+
+  networkEl.classList.remove("ok", "err", "muted");
+  if (data.network_checked === true) {
+    if (data.network_ok) {
+      networkEl.textContent = "可访问";
+      networkEl.classList.add("ok");
+    } else {
+      networkEl.textContent = "不可访问";
+      networkEl.classList.add("err");
+    }
+    return;
+  }
+
+  if (data.network_checked === false && data.network_message) {
+    networkEl.textContent = data.network_message;
+    networkEl.classList.add("muted");
+    return;
+  }
+}
+
+function applyCardResult(serverId, data) {
+  const card = document.querySelector(`.server-card[data-server-id="${serverId}"]`);
+  if (!card) return;
+  applyRuntimeToCard(card, data);
+  applyNetworkToCard(card, data);
+  const resultEl = card.querySelector(".result");
+  if (!resultEl) return;
+  markResult(resultEl, Boolean(data.ok), formatOutput(data));
+}
+
+async function switchPort(serverId, port, button, resultEl) {
+  markResult(resultEl, null, "正在执行 SSH 命令...");
+  const restore = setButtonLoading(button, "执行中...");
+  try {
+    const resp = await fetch("/api/switch-port", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ server_id: serverId, port }),
+    });
+    const data = await parseApiResponse(resp);
+    applyCardResult(serverId, data);
+  } catch (err) {
+    if (err instanceof UnauthorizedError) return;
+    markResult(resultEl, false, `request error: ${err}`);
+  } finally {
+    restore();
+  }
+}
+
+async function checkStatus(serverId, button, resultEl) {
+  markResult(resultEl, null, "正在检查 trojan 服务状态...");
+  const restore = setButtonLoading(button, "检查中...");
+  try {
+    const resp = await fetch("/api/trojan-status", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ server_id: serverId }),
+    });
+    const data = await parseApiResponse(resp);
+    applyCardResult(serverId, data);
+  } catch (err) {
+    if (err instanceof UnauthorizedError) return;
+    markResult(resultEl, false, `request error: ${err}`);
+  } finally {
+    restore();
+  }
+}
+
+async function checkNetwork(serverId, button, resultEl) {
+  markResult(resultEl, null, "正在检测地址端口连通性...");
+  const restore = setButtonLoading(button, "检测中...");
+  try {
+    const resp = await fetch("/api/network-check", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ server_id: serverId }),
+    });
+    const data = await parseApiResponse(resp);
+    applyCardResult(serverId, data);
+  } catch (err) {
+    if (err instanceof UnauthorizedError) return;
+    markResult(resultEl, false, `request error: ${err}`);
+  } finally {
+    restore();
+  }
+}
+
+function parseInitialServers() {
+  const el = document.querySelector("#initial-servers");
+  if (!el) return [];
+  try {
+    const data = JSON.parse(el.textContent || "[]");
+    return Array.isArray(data) ? data : [];
+  } catch (_err) {
+    return [];
+  }
+}
+
+const initialServers = parseInitialServers();
+
+function parseInitialAuth() {
+  const el = document.querySelector("#initial-auth");
+  if (!el) return { username: "", password: "" };
+  try {
+    const data = JSON.parse(el.textContent || "{}");
+    if (!data || typeof data !== "object") return { username: "", password: "" };
+    return {
+      username: typeof data.username === "string" ? data.username : "",
+      password: typeof data.password === "string" ? data.password : "",
+    };
+  } catch (_err) {
+    return { username: "", password: "" };
+  }
+}
+
+const initialAuth = parseInitialAuth();
+
+function createEditorItem(server, templateEl) {
+  const fragment = templateEl.content.cloneNode(true);
+  const item = fragment.querySelector(".editor-item");
+  if (!item) return null;
+
+  const fields = {
+    id: item.querySelector('input[data-field="id"]'),
+    name: item.querySelector('input[data-field="name"]'),
+    commandTemplate: item.querySelector('input[data-field="command_template"]'),
+    statusTemplate: item.querySelector('input[data-field="status_command_template"]'),
+    currentPort: item.querySelector('input[data-field="current_port"]'),
+    addr: item.querySelector('input[data-field="addr"]'),
+    description: item.querySelector('input[data-field="description"]'),
+  };
+
+  if (fields.id) fields.id.value = server.id || "";
+  if (fields.name) fields.name.value = server.name || "";
+  if (fields.commandTemplate) {
+    const fallback = server.ssh_target ? `ssh ${server.ssh_target} trojan port $1` : "";
+    fields.commandTemplate.value = server.command_template || fallback;
+  }
+  if (fields.statusTemplate) fields.statusTemplate.value = server.status_command_template || "";
+  if (fields.currentPort) fields.currentPort.value = server.current_port || "";
+  if (fields.addr) fields.addr.value = server.addr || "";
+  if (fields.description) fields.description.value = server.description || "";
+
+  const removeBtn = item.querySelector(".remove-server-btn");
+  if (removeBtn) {
+    removeBtn.addEventListener("click", () => {
+      item.remove();
+    });
+  }
+  return item;
+}
+
+function collectServerEditors(listEl) {
+  const items = Array.from(listEl.querySelectorAll(".editor-item"));
+  return items.map((item) => {
+    const getValue = (field) => {
+      const el = item.querySelector(`input[data-field="${field}"]`);
+      return el ? el.value.trim() : "";
+    };
+    return {
+      id: getValue("id"),
+      name: getValue("name"),
+      command_template: getValue("command_template"),
+      status_command_template: getValue("status_command_template"),
+      current_port: getValue("current_port"),
+      addr: getValue("addr"),
+      description: getValue("description"),
+    };
+  });
+}
+
+function initConfigEditor() {
+  const listEl = document.querySelector("#editor-list");
+  const templateEl = document.querySelector("#server-editor-template");
+  const addBtn = document.querySelector("#add-server-btn");
+  const saveBtn = document.querySelector("#save-servers-btn");
+  const resultEl = document.querySelector("#config-result");
+  const authUsernameEl = document.querySelector("#auth-username");
+  const authPasswordEl = document.querySelector("#auth-password");
+  if (!listEl || !templateEl || !addBtn || !saveBtn || !resultEl) return;
+
+  const initial = initialServers.length
+    ? initialServers
+    : [{ id: "", name: "", command_template: "", status_command_template: "", current_port: "", addr: "", description: "" }];
+
+  for (const server of initial) {
+    const node = createEditorItem(server, templateEl);
+    if (node) listEl.appendChild(node);
+  }
+
+  if (authUsernameEl) authUsernameEl.value = initialAuth.username || "";
+  if (authPasswordEl) authPasswordEl.value = initialAuth.password || "";
+
+  addBtn.addEventListener("click", () => {
+    const node = createEditorItem(
+      { id: "", name: "", command_template: "", status_command_template: "", current_port: "", addr: "", description: "" },
+      templateEl,
+    );
+    if (node) listEl.appendChild(node);
+  });
+
+  saveBtn.addEventListener("click", async () => {
+    const servers = collectServerEditors(listEl);
+    const authUsername = authUsernameEl ? authUsernameEl.value.trim() : "";
+    const authPassword = authPasswordEl ? authPasswordEl.value.trim() : "";
+    if (!servers.length) {
+      markResult(resultEl, false, "至少保留一个服务器配置。");
+      return;
+    }
+
+    for (let i = 0; i < servers.length; i += 1) {
+      const s = servers[i];
+      if (!s.id) {
+        markResult(resultEl, false, `第 ${i + 1} 行缺少服务器 ID。`);
+        return;
+      }
+      if (!s.command_template || !s.command_template.includes("$1")) {
+        markResult(resultEl, false, `第 ${i + 1} 行命令模板必须包含 $1。`);
+        return;
+      }
+      if (s.current_port) {
+        const p = Number(s.current_port);
+        if (!Number.isInteger(p) || p < 1 || p > 65535) {
+          markResult(resultEl, false, `第 ${i + 1} 行当前端口必须是 1-65535 的整数。`);
+          return;
+        }
+      }
+      if (s.addr && /\s/.test(s.addr)) {
+        markResult(resultEl, false, `第 ${i + 1} 行检测地址不能包含空白字符。`);
+        return;
+      }
+    }
+
+    if ((authUsername && !authPassword) || (!authUsername && authPassword)) {
+      markResult(resultEl, false, "登录配置必须同时填写账号和密码，或全部留空。");
+      return;
+    }
+
+    const restore = setButtonLoading(saveBtn, "保存中...");
+    markResult(resultEl, null, "正在写入配置文件...");
+    try {
+      const resp = await fetch("/api/servers", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          servers,
+          auth: {
+            username: authUsername,
+            password: authPassword,
+          },
+        }),
+      });
+      const data = await parseApiResponse(resp);
+      if (!data.ok) {
+        markResult(resultEl, false, data.message || "保存失败。");
+        return;
+      }
+      markResult(resultEl, true, "保存成功。");
+      window.setTimeout(() => window.location.reload(), 600);
+    } catch (err) {
+      if (err instanceof UnauthorizedError) return;
+      markResult(resultEl, false, `request error: ${err}`);
+    } finally {
+      restore();
+    }
+  });
+}
+
+function initServerCards() {
+  document.querySelectorAll(".server-card").forEach((card) => {
+    const serverId = card.dataset.serverId;
+    const input = card.querySelector("input[type='number']");
+    const submitBtn = card.querySelector(".submit-btn");
+    const statusBtn = card.querySelector(".status-btn");
+    const networkBtn = card.querySelector(".network-btn");
+    const resultEl = card.querySelector(".result");
+    if (!serverId || !input || !submitBtn || !statusBtn || !networkBtn || !resultEl) return;
+
+    const initial = initialServers.find((item) => item.id === serverId);
+    if (initial) applyRuntimeToCard(card, initial);
+
+    card.addEventListener("click", (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const btn = target.closest(".quick-btn");
+      if (!btn) return;
+      const p = btn.dataset.port;
+      if (!p) return;
+      input.value = p;
+      input.focus();
+    });
+
+    submitBtn.addEventListener("click", async () => {
+      const port = Number(input.value);
+      if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        markResult(resultEl, false, "端口必须是 1-65535 的整数");
+        return;
+      }
+      await switchPort(serverId, port, submitBtn, resultEl);
+    });
+
+    statusBtn.addEventListener("click", async () => {
+      await checkStatus(serverId, statusBtn, resultEl);
+    });
+
+    networkBtn.addEventListener("click", async () => {
+      await checkNetwork(serverId, networkBtn, resultEl);
+    });
+
+    input.addEventListener("keydown", async (event) => {
+      if (event.key === "Enter") {
+        submitBtn.click();
+      }
+    });
+  });
+}
+
+initConfigEditor();
+initServerCards();

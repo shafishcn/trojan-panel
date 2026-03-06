@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Server Manager</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <div class="bg-shape shape-1"></div>
+  <div class="bg-shape shape-2"></div>
+
+  <main class="container">
+    <header class="topbar">
+      <div class="topbar-main">
+        <h1>服务器管理</h1>
+        <div class="top-links">
+          <a class="top-link" href="{{ url_for('index') }}">返回操作页</a>
+          {% if auth_enabled %}
+            <a class="top-link" href="{{ url_for('logout') }}">退出登录{% if current_user %}（{{ current_user }}）{% endif %}</a>
+          {% endif %}
+        </div>
+      </div>
+      <p>维护服务器配置与当前端口</p>
+      <small>配置文件: {{ config_path }}</small>
+    </header>
+
+    {% if error %}
+      <section class="panel panel-error">
+        <h2>配置读取失败</h2>
+        <p>{{ error }}</p>
+      </section>
+    {% endif %}
+
+    <section class="panel config-panel">
+      <div class="config-head">
+        <div>
+          <h2>服务器列表</h2>
+          <p>支持命令模板：<code>ssh xxx trojan port $1</code></p>
+        </div>
+        <div class="config-actions">
+          <button id="add-server-btn" type="button" class="ghost-btn">新增服务器</button>
+          <button id="save-servers-btn" type="button">保存配置</button>
+        </div>
+      </div>
+      <div id="editor-list" class="editor-list"></div>
+      <section class="auth-panel">
+        <h2>登录配置</h2>
+        <p>留空表示关闭登录校验；若启用，账号密码会保存到 <code>servers.json</code> 的 <code>auth</code> 字段。</p>
+        <div class="editor-grid auth-grid">
+          <label>
+            <span>登录账号</span>
+            <input id="auth-username" type="text" placeholder="例如 admin" value="{{ auth.username }}">
+          </label>
+          <label>
+            <span>登录密码</span>
+            <input id="auth-password" type="text" placeholder="例如 123456" value="{{ auth.password }}">
+          </label>
+        </div>
+      </section>
+      <pre id="config-result" class="result">等待操作...</pre>
+    </section>
+  </main>
+
+  <template id="server-editor-template">
+    <article class="editor-item">
+      <div class="editor-grid">
+        <label>
+          <span>ID</span>
+          <input data-field="id" type="text" placeholder="例如 hk-main">
+        </label>
+        <label>
+          <span>名称</span>
+          <input data-field="name" type="text" placeholder="例如 Hong Kong Main">
+        </label>
+        <label class="full-line">
+          <span>命令模板</span>
+          <input data-field="command_template" type="text" placeholder="ssh root@1.2.3.4 trojan port $1">
+        </label>
+        <label class="full-line">
+          <span>状态命令（可选）</span>
+          <input data-field="status_command_template" type="text" placeholder="ssh root@1.2.3.4 trojan status">
+        </label>
+        <label>
+          <span>当前端口</span>
+          <input data-field="current_port" type="number" min="1" max="65535" placeholder="例如 443">
+        </label>
+        <label>
+          <span>检测地址</span>
+          <input data-field="addr" type="text" placeholder="例如 tj9.tffats.top">
+        </label>
+        <label>
+          <span>描述</span>
+          <input data-field="description" type="text" placeholder="可选">
+        </label>
+      </div>
+      <div class="editor-foot">
+        <button type="button" class="danger-btn remove-server-btn">删除</button>
+      </div>
+    </article>
+  </template>
+
+  <script id="initial-servers" type="application/json">{{ servers | tojson }}</script>
+  <script id="initial-auth" type="application/json">{{ auth | tojson }}</script>
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
