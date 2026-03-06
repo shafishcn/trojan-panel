@@ -18,6 +18,7 @@
       <div class="topbar-main">
         <h1>Trojan Port Manager</h1>
         <div class="top-links">
+          <a class="top-link" href="{{ url_for('subscriptions_page') }}">Token 管理</a>
           <a class="top-link" href="{{ url_for('servers_page') }}">服务器管理</a>
           {% if auth_enabled %}
             <a class="top-link" href="{{ url_for('logout') }}">退出登录{% if current_user %}（{{ current_user }}）{% endif %}</a>
@@ -58,6 +59,7 @@
           <input id="sub-token-input" type="text" placeholder="例如 my-token">
         </div>
         <pre id="sub-result" class="result">请先勾选服务器后生成访问地址...</pre>
+        <p class="sub-manage-jump">已保存 Token 请前往 <a href="{{ url_for('subscriptions_page') }}">Token 管理页面</a> 查看和维护。</p>
       </section>
 
       <section class="grid">

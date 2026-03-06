@@ -386,6 +386,22 @@ function initSubscriptionPanel() {
   if (!genBtn || !selectAllBtn || !clearBtn || !resultEl) return;
 
   const allChecks = () => Array.from(document.querySelectorAll(".server-card .sub-select"));
+  const getServerIdByCheck = (el) => {
+    const card = el.closest(".server-card");
+    return card ? card.getAttribute("data-server-id") || "" : "";
+  };
+  const getSelectedServerIds = () => {
+    return allChecks()
+      .filter((el) => el.checked)
+      .map((el) => getServerIdByCheck(el))
+      .filter((x) => Boolean(x));
+  };
+
+  const tokenFromQuery = new URLSearchParams(window.location.search).get("token") || "";
+  if (tokenInput && tokenFromQuery && /^[A-Za-z0-9_-]{1,64}$/.test(tokenFromQuery) && !tokenInput.value.trim()) {
+    tokenInput.value = tokenFromQuery;
+    markResult(resultEl, null, `已载入 Token: ${tokenFromQuery}，请勾选服务器后点击生成进行覆盖更新。`);
+  }
 
   selectAllBtn.addEventListener("click", () => {
     for (const el of allChecks()) el.checked = true;
@@ -398,13 +414,7 @@ function initSubscriptionPanel() {
   });
 
   genBtn.addEventListener("click", async () => {
-    const selectedIds = allChecks()
-      .filter((el) => el.checked)
-      .map((el) => {
-        const card = el.closest(".server-card");
-        return card ? card.getAttribute("data-server-id") : "";
-      })
-      .filter((x) => Boolean(x));
+    const selectedIds = getSelectedServerIds();
 
     if (!selectedIds.length) {
       markResult(resultEl, false, "请先勾选至少一个服务器。");
@@ -435,6 +445,160 @@ function initSubscriptionPanel() {
       restore();
     }
   });
+}
+
+function initSubscriptionManagerPage() {
+  const refreshBtn = document.querySelector("#sub-manager-refresh-btn");
+  const tokenListEl = document.querySelector("#sub-manager-token-list");
+  const resultEl = document.querySelector("#sub-manager-result");
+  if (!refreshBtn || !tokenListEl || !resultEl) return;
+
+  const setListText = (text) => {
+    tokenListEl.innerHTML = "";
+    const el = document.createElement("p");
+    el.className = "sub-token-empty";
+    el.textContent = text;
+    tokenListEl.appendChild(el);
+  };
+
+  const renderList = (items) => {
+    tokenListEl.innerHTML = "";
+    if (!Array.isArray(items) || !items.length) {
+      setListText("暂无已保存 Token。");
+      return;
+    }
+
+    for (const item of items) {
+      const token = typeof item.token === "string" ? item.token : "";
+      if (!token) continue;
+      const serverIds = Array.isArray(item.server_ids) ? item.server_ids.filter((x) => typeof x === "string" && x) : [];
+      const serverNames = Array.isArray(item.server_names) ? item.server_names.filter((x) => typeof x === "string" && x) : [];
+      const missingIds = Array.isArray(item.missing_server_ids)
+        ? item.missing_server_ids.filter((x) => typeof x === "string" && x)
+        : [];
+
+      const row = document.createElement("article");
+      row.className = "sub-token-item";
+
+      const tokenLine = document.createElement("p");
+      tokenLine.className = "sub-token-token";
+      tokenLine.textContent = token;
+      row.appendChild(tokenLine);
+
+      const infoLine = document.createElement("p");
+      infoLine.className = "sub-token-meta";
+      infoLine.textContent = `服务器(${serverIds.length}): ${serverIds.join(", ") || "无"}`;
+      row.appendChild(infoLine);
+
+      if (serverNames.length) {
+        const nameLine = document.createElement("p");
+        nameLine.className = "sub-token-meta";
+        nameLine.textContent = `节点名: ${serverNames.join(", ")}`;
+        row.appendChild(nameLine);
+      }
+
+      if (missingIds.length) {
+        const missingLine = document.createElement("p");
+        missingLine.className = "sub-token-meta sub-token-missing";
+        missingLine.textContent = `缺失节点: ${missingIds.join(", ")}`;
+        row.appendChild(missingLine);
+      }
+
+      const url = typeof item.url === "string" ? item.url : "";
+      if (url) {
+        const urlLine = document.createElement("a");
+        urlLine.className = "sub-token-url";
+        urlLine.href = url;
+        urlLine.target = "_blank";
+        urlLine.rel = "noopener noreferrer";
+        urlLine.textContent = url;
+        row.appendChild(urlLine);
+      }
+
+      const actions = document.createElement("div");
+      actions.className = "sub-token-actions";
+
+      const useBtn = document.createElement("button");
+      useBtn.type = "button";
+      useBtn.className = "ghost-btn";
+      useBtn.textContent = "去生成页";
+      useBtn.addEventListener("click", () => {
+        window.location.href = `/?token=${encodeURIComponent(token)}`;
+      });
+      actions.appendChild(useBtn);
+
+      const copyBtn = document.createElement("button");
+      copyBtn.type = "button";
+      copyBtn.className = "ghost-btn";
+      copyBtn.textContent = "复制链接";
+      copyBtn.addEventListener("click", async () => {
+        if (!url) {
+          markResult(resultEl, false, "当前 Token 没有可复制的链接。");
+          return;
+        }
+        try {
+          await navigator.clipboard.writeText(url);
+          markResult(resultEl, true, `已复制订阅地址: ${token}`);
+        } catch (err) {
+          markResult(resultEl, false, `复制失败: ${err}`);
+        }
+      });
+      actions.appendChild(copyBtn);
+
+      const deleteBtn = document.createElement("button");
+      deleteBtn.type = "button";
+      deleteBtn.className = "danger-btn";
+      deleteBtn.textContent = "删除";
+      deleteBtn.addEventListener("click", async () => {
+        if (!window.confirm(`确认删除 Token "${token}" 吗？`)) return;
+        const restore = setButtonLoading(deleteBtn, "删除中...");
+        try {
+          const resp = await fetch(`/api/subscriptions/${encodeURIComponent(token)}`, { method: "DELETE" });
+          const data = await parseApiResponse(resp);
+          if (!data.ok) {
+            markResult(resultEl, false, data.message || "删除失败。");
+            return;
+          }
+          markResult(resultEl, true, `Token 已删除: ${token}`);
+          await loadSubscriptionList();
+        } catch (err) {
+          if (err instanceof UnauthorizedError) return;
+          markResult(resultEl, false, `request error: ${err}`);
+        } finally {
+          restore();
+        }
+      });
+      actions.appendChild(deleteBtn);
+
+      row.appendChild(actions);
+      tokenListEl.appendChild(row);
+    }
+  };
+
+  const loadSubscriptionList = async (button = null) => {
+    let restore = null;
+    if (button) restore = setButtonLoading(button, "刷新中...");
+    setListText("正在加载 Token 列表...");
+    try {
+      const resp = await fetch("/api/subscriptions");
+      const data = await parseApiResponse(resp);
+      if (!data.ok) {
+        setListText(`加载失败: ${data.message || "未知错误"}`);
+        return;
+      }
+      renderList(data.subscriptions);
+    } catch (err) {
+      if (err instanceof UnauthorizedError) return;
+      setListText(`request error: ${err}`);
+    } finally {
+      if (restore) restore();
+    }
+  };
+
+  refreshBtn.addEventListener("click", async () => {
+    await loadSubscriptionList(refreshBtn);
+  });
+  loadSubscriptionList();
 }
 
 function initServerCards() {
@@ -489,3 +653,4 @@ function initServerCards() {
 initConfigEditor();
 initServerCards();
 initSubscriptionPanel();
+initSubscriptionManagerPage();

@@ -183,6 +183,20 @@ def build_new_token(existing_tokens: set[str]) -> str:
             return token
 
 
+def clean_subscription_view(
+    token: str, server_ids: list[str], server_name_by_id: dict[str, str], sub_url: str
+) -> dict[str, Any]:
+    missing_server_ids = [x for x in server_ids if x not in server_name_by_id]
+    return {
+        "token": token,
+        "url": sub_url,
+        "server_ids": server_ids,
+        "server_count": len(server_ids),
+        "server_names": [server_name_by_id[x] for x in server_ids if x in server_name_by_id],
+        "missing_server_ids": missing_server_ids,
+    }
+
+
 def find_server(servers: list[dict[str, Any]], server_id: str) -> dict[str, Any]:
     for server in servers:
         if server.get("id") == server_id:
@@ -739,6 +753,28 @@ def servers_page():
     )
 
 
+@app.get("/subscriptions")
+def subscriptions_page():
+    config_path = get_config_path()
+    error = None
+    auth_enabled = False
+    current_user = ""
+    try:
+        _ = load_config(config_path)
+        auth_enabled = get_auth_credentials(config_path) is not None
+        current_user = str(session.get("username", "")).strip()
+    except Exception as exc:  # noqa: BLE001
+        error = str(exc)
+
+    return render_template(
+        "subscriptions.html",
+        config_path=str(config_path),
+        error=error,
+        auth_enabled=auth_enabled,
+        current_user=current_user,
+    )
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     creds = get_auth_credentials(get_config_path())
@@ -930,6 +966,74 @@ def subscription_link():
             "server_ids": server_ids,
             "links": links,
             "message": message,
+        }
+    )
+
+
+@app.get("/api/subscriptions")
+def list_subscriptions():
+    try:
+        config = load_config(get_config_path())
+        servers = config.get("servers", [])
+        subscriptions = normalize_subscriptions(config.get("subscriptions"))
+    except ValueError as exc:
+        return jsonify({"ok": False, "message": str(exc)}), 400
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"ok": False, "message": f"Config error: {exc}"}), 500
+
+    server_name_by_id: dict[str, str] = {}
+    for item in servers:
+        server_id = str(item.get("id", "")).strip()
+        if not server_id:
+            continue
+        name = str(item.get("name", "")).strip() or server_id
+        server_name_by_id[server_id] = name
+
+    out: list[dict[str, Any]] = []
+    for token in sorted(subscriptions.keys()):
+        server_ids = subscriptions[token]
+        sub_url = request.host_url.rstrip("/") + url_for("subscription_content", token=token)
+        out.append(clean_subscription_view(token, server_ids, server_name_by_id, sub_url))
+
+    return jsonify({"ok": True, "subscriptions": out, "count": len(out)})
+
+
+@app.delete("/api/subscriptions/<token>")
+def delete_subscription(token: str):
+    try:
+        clean_token = normalize_token(token)
+    except ValueError as exc:
+        return jsonify({"ok": False, "message": str(exc)}), 400
+    if not clean_token:
+        return jsonify({"ok": False, "message": "Token must not be empty."}), 400
+
+    config_path = get_config_path()
+    try:
+        config = load_config(config_path)
+        subscriptions = normalize_subscriptions(config.get("subscriptions"))
+    except ValueError as exc:
+        return jsonify({"ok": False, "message": str(exc)}), 400
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"ok": False, "message": f"Config error: {exc}"}), 500
+
+    server_ids = subscriptions.get(clean_token)
+    if server_ids is None:
+        return jsonify({"ok": False, "message": "Subscription token not found."}), 404
+
+    subscriptions.pop(clean_token, None)
+    config["subscriptions"] = subscriptions
+    try:
+        save_config(config_path, config)
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"ok": False, "message": f"Save failed: {exc}"}), 500
+
+    return jsonify(
+        {
+            "ok": True,
+            "message": "Subscription token deleted.",
+            "token": clean_token,
+            "server_ids": server_ids,
+            "server_count": len(server_ids),
         }
     )
 

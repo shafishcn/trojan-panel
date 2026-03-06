@@ -604,6 +604,132 @@ body {
   min-height: 120px;
 }
 
+.sub-manage-jump {
+  margin: 10px 0 0;
+  color: #bdd0f5;
+  font-size: 0.88rem;
+}
+
+.sub-manage-jump a {
+  color: #98dcff;
+  text-decoration: none;
+}
+
+.sub-manage-jump a:hover {
+  color: #c9efff;
+  text-decoration: underline;
+}
+
+.sub-manage {
+  margin-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  padding-top: 12px;
+}
+
+.sub-manage-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.sub-manage-head h3 {
+  margin: 0;
+  font-size: 0.98rem;
+}
+
+.sub-manage-head button {
+  font-size: 0.82rem;
+  padding: 6px 10px;
+}
+
+.sub-manage-head .ghost-btn,
+.sub-token-actions .ghost-btn {
+  border: 1px solid rgba(124, 217, 255, 0.4);
+  background: transparent;
+  color: #bde9ff;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: border-color 120ms ease, color 120ms ease, transform 120ms ease;
+}
+
+.sub-manage-head .ghost-btn:hover,
+.sub-token-actions .ghost-btn:hover {
+  border-color: rgba(124, 217, 255, 0.75);
+  color: #d9f5ff;
+  transform: translateY(-1px);
+}
+
+.sub-manage-head .ghost-btn:disabled,
+.sub-token-actions .ghost-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.sub-token-list {
+  display: grid;
+  gap: 8px;
+}
+
+.sub-token-empty {
+  margin: 0;
+  color: #bdd0f5;
+  font-size: 0.88rem;
+}
+
+.sub-token-item {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(8, 16, 30, 0.65);
+  padding: 10px;
+  display: grid;
+  gap: 6px;
+}
+
+.sub-token-token {
+  margin: 0;
+  font-family: "JetBrains Mono", "SF Mono", "Consolas", monospace;
+  font-size: 0.92rem;
+  color: #d9f5ff;
+}
+
+.sub-token-meta {
+  margin: 0;
+  color: #b9ccef;
+  font-size: 0.83rem;
+  word-break: break-word;
+}
+
+.sub-token-missing {
+  color: #ffb4bd;
+}
+
+.sub-token-url {
+  color: #98dcff;
+  font-size: 0.82rem;
+  text-decoration: none;
+  word-break: break-all;
+}
+
+.sub-token-url:hover {
+  color: #c9efff;
+  text-decoration: underline;
+}
+
+.sub-token-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sub-token-actions button {
+  font-size: 0.8rem;
+  padding: 5px 9px;
+  cursor: pointer;
+}
+
 .sub-token-row {
   margin-top: 10px;
   margin-bottom: 10px;
@@ -733,5 +859,14 @@ body {
 
   .editor-grid {
     grid-template-columns: 1fr;
+  }
+
+  .sub-manage-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .sub-token-actions {
+    gap: 6px;
   }
 }
