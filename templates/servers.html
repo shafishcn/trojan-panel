@@ -19,7 +19,7 @@
         <h1>服务器管理</h1>
         <div class="top-links">
           <a class="top-link" href="{{ url_for('index') }}">返回操作页</a>
-          <a class="top-link" href="{{ url_for('subscriptions_page') }}">Token 管理</a>
+          <a class="top-link" href="{{ url_for('subscriptions_page') }}">订阅管理</a>
           {% if auth_enabled %}
             <a class="top-link" href="{{ url_for('logout') }}">退出登录{% if current_user %}（{{ current_user }}）{% endif %}</a>
           {% endif %}

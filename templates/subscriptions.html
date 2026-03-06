@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Subscription Token Manager</title>
+  <title>Subscription Manager</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -16,7 +16,7 @@
   <main class="container">
     <header class="topbar">
       <div class="topbar-main">
-        <h1>订阅 Token 管理</h1>
+        <h1>订阅管理</h1>
         <div class="top-links">
           <a class="top-link" href="{{ url_for('index') }}">返回操作页</a>
           <a class="top-link" href="{{ url_for('servers_page') }}">服务器管理</a>
@@ -25,7 +25,7 @@
           {% endif %}
         </div>
       </div>
-      <p>统一查看、复制和删除已保存的订阅 Token</p>
+      <p>统一查看、复制和删除已保存的订阅</p>
       <small>配置文件: {{ config_path }}</small>
     </header>
 
@@ -39,8 +39,8 @@
     <section class="panel sub-panel">
       <div class="config-head">
         <div>
-          <h2>已保存 Token</h2>
-          <p>可复制订阅链接、删除无效 Token，或跳转回操作页进行覆盖更新。</p>
+          <h2>已保存订阅</h2>
+          <p>可复制订阅链接、删除无效订阅，或跳转回操作页进行覆盖更新。</p>
         </div>
         <div class="config-actions">
           <button id="sub-manager-refresh-btn" class="ghost-btn" type="button">刷新列表</button>
@@ -48,7 +48,7 @@
       </div>
 
       <div id="sub-manager-token-list" class="sub-token-list">
-        <p class="sub-token-empty">正在加载 Token 列表...</p>
+        <p class="sub-token-empty">正在加载订阅列表...</p>
       </div>
       <pre id="sub-manager-result" class="result">等待操作...</pre>
     </section>

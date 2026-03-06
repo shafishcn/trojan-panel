@@ -78,7 +78,7 @@ TROJAN_PANEL_HOST=127.0.0.1 TROJAN_PANEL_PORT=8000 .venv/bin/python app.py
 
 顶层 `subscriptions` 字段说明：
 
-- 由系统自动维护，记录 `token -> server_ids` 映射
+- 由系统自动维护，记录 `订阅标识(token) -> server_ids` 映射
 - 你可以不手工修改
 
 说明：快捷端口不再通过配置指定，系统会根据 `current_port` 自动生成 `current_port + 1`。
@@ -147,11 +147,11 @@ TROJAN_PANEL_HOST=127.0.0.1 TROJAN_PANEL_PORT=8000 .venv/bin/python app.py
 ### 5.6 Trojan 订阅地址（Base64）
 
 - 在操作页每个服务器卡片勾选“订阅”（可单选或多选）
-- 可填写“自定义 Token”（可选）
+- 可填写“自定义订阅标识”（可选）
 - 点击页面顶部“生成访问地址”
 - 面板会返回一个订阅 URL（形如 `/sub/<token>`）
 - 在浏览器或客户端访问该 URL，返回内容为所选服务器 trojan 链接换行后再做 base64 的结果
-- 如果自定义 Token 已存在，会被最新选择覆盖（以最新为准）
+- 如果自定义订阅标识已存在，会被最新选择覆盖（以最新为准）
 
 链接格式：
 

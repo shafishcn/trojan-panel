@@ -180,7 +180,7 @@ function formatSubscriptionResult(data) {
   const lines = [];
   lines.push(`status: ${data.ok ? "success" : "failed"}`);
   if (data.message) lines.push(`message: ${data.message}`);
-  if (data.token) lines.push(`token: ${data.token}`);
+  if (data.token) lines.push(`subscription id: ${data.token}`);
   if (data.overwritten !== undefined) lines.push(`overwritten: ${data.overwritten ? "yes" : "no"}`);
   if (data.server_count !== undefined) lines.push(`server count: ${data.server_count}`);
   if (Array.isArray(data.server_ids) && data.server_ids.length) lines.push(`server ids: ${data.server_ids.join(", ")}`);
@@ -400,7 +400,7 @@ function initSubscriptionPanel() {
   const tokenFromQuery = new URLSearchParams(window.location.search).get("token") || "";
   if (tokenInput && tokenFromQuery && /^[A-Za-z0-9_-]{1,64}$/.test(tokenFromQuery) && !tokenInput.value.trim()) {
     tokenInput.value = tokenFromQuery;
-    markResult(resultEl, null, `已载入 Token: ${tokenFromQuery}，请勾选服务器后点击生成进行覆盖更新。`);
+    markResult(resultEl, null, `已载入订阅标识: ${tokenFromQuery}，请勾选服务器后点击生成进行覆盖更新。`);
   }
 
   selectAllBtn.addEventListener("click", () => {
@@ -423,7 +423,7 @@ function initSubscriptionPanel() {
 
     const token = tokenInput ? tokenInput.value.trim() : "";
     if (token && !/^[A-Za-z0-9_-]{1,64}$/.test(token)) {
-      markResult(resultEl, false, "自定义 Token 只能包含字母、数字、-、_，且长度不超过 64。");
+      markResult(resultEl, false, "自定义订阅标识只能包含字母、数字、-、_，且长度不超过 64。");
       return;
     }
 
@@ -464,7 +464,7 @@ function initSubscriptionManagerPage() {
   const renderList = (items) => {
     tokenListEl.innerHTML = "";
     if (!Array.isArray(items) || !items.length) {
-      setListText("暂无已保存 Token。");
+      setListText("暂无已保存订阅。");
       return;
     }
 
@@ -533,7 +533,7 @@ function initSubscriptionManagerPage() {
       copyBtn.textContent = "复制链接";
       copyBtn.addEventListener("click", async () => {
         if (!url) {
-          markResult(resultEl, false, "当前 Token 没有可复制的链接。");
+          markResult(resultEl, false, "当前订阅没有可复制的链接。");
           return;
         }
         try {
@@ -550,7 +550,7 @@ function initSubscriptionManagerPage() {
       deleteBtn.className = "danger-btn";
       deleteBtn.textContent = "删除";
       deleteBtn.addEventListener("click", async () => {
-        if (!window.confirm(`确认删除 Token "${token}" 吗？`)) return;
+        if (!window.confirm(`确认删除订阅 "${token}" 吗？`)) return;
         const restore = setButtonLoading(deleteBtn, "删除中...");
         try {
           const resp = await fetch(`/api/subscriptions/${encodeURIComponent(token)}`, { method: "DELETE" });
@@ -559,7 +559,7 @@ function initSubscriptionManagerPage() {
             markResult(resultEl, false, data.message || "删除失败。");
             return;
           }
-          markResult(resultEl, true, `Token 已删除: ${token}`);
+          markResult(resultEl, true, `订阅已删除: ${token}`);
           await loadSubscriptionList();
         } catch (err) {
           if (err instanceof UnauthorizedError) return;
@@ -578,7 +578,7 @@ function initSubscriptionManagerPage() {
   const loadSubscriptionList = async (button = null) => {
     let restore = null;
     if (button) restore = setButtonLoading(button, "刷新中...");
-    setListText("正在加载 Token 列表...");
+    setListText("正在加载订阅列表...");
     try {
       const resp = await fetch("/api/subscriptions");
       const data = await parseApiResponse(resp);
