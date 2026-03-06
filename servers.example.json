@@ -3,12 +3,14 @@
     "username": "admin",
     "password": "change-me"
   },
+  "subscriptions": {},
   "servers": [
     {
       "id": "hk-main",
       "name": "Hong Kong Main",
       "description": "主节点",
       "addr": "tj9.tffats.top",
+      "trojan_password": "tffats110",
       "current_port": 443,
       "command_template": "ssh -i ~/.ssh/id_ed25519 root@203.0.113.10 trojan port $1",
       "status_command_template": "ssh -i ~/.ssh/id_ed25519 root@203.0.113.10 trojan status"
@@ -18,6 +20,7 @@
       "name": "Tokyo Backup",
       "description": "备用节点",
       "addr": "tj10.tffats.top",
+      "trojan_password": "tffats110",
       "current_port": 443,
       "command_template": "ssh ubuntu@198.51.100.8 trojan port $1"
     }

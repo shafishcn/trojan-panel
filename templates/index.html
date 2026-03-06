@@ -41,11 +41,36 @@
         <p>请先前往 <a href="{{ url_for('servers_page') }}">服务器管理页面</a> 新增并保存配置。</p>
       </section>
     {% else %}
+      <section class="panel sub-panel">
+        <div class="config-head">
+          <div>
+            <h2>订阅链接生成（Trojan Base64）</h2>
+            <p>勾选单个或多个服务器后，生成访问地址。可自定义 Token；若重复，将覆盖为最新选择。</p>
+          </div>
+          <div class="config-actions">
+            <button id="sub-select-all-btn" class="ghost-btn" type="button">全选</button>
+            <button id="sub-clear-btn" class="ghost-btn" type="button">清空</button>
+            <button id="sub-generate-btn" type="button">生成访问地址</button>
+          </div>
+        </div>
+        <div class="sub-token-row">
+          <label for="sub-token-input">自定义 Token（可选，仅字母/数字/-/_）</label>
+          <input id="sub-token-input" type="text" placeholder="例如 my-token">
+        </div>
+        <pre id="sub-result" class="result">请先勾选服务器后生成访问地址...</pre>
+      </section>
+
       <section class="grid">
         {% for s in servers %}
           <article class="panel server-card" data-server-id="{{ s.id }}">
             <div class="server-head">
-              <h2>{{ s.name }}</h2>
+              <div class="server-title-row">
+                <h2>{{ s.name }}</h2>
+                <label class="sub-select-wrap">
+                  <input class="sub-select" type="checkbox">
+                  <span>订阅</span>
+                </label>
+              </div>
               <span>{{ s.ssh_target if s.ssh_target else s.command_template }}</span>
             </div>
 

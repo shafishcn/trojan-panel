@@ -1,16 +1,19 @@
 from __future__ import annotations
 
+import base64
 import hmac
 import json
 import os
+import secrets
 import shlex
 import socket
 import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
-from flask import Flask, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, Response, jsonify, redirect, render_template, request, session, url_for
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -44,7 +47,7 @@ SSH_OPTIONS_WITH_ARG = {
 
 def load_config(config_path: Path) -> dict[str, Any]:
     if not config_path.exists():
-        return {"servers": []}
+        return {"servers": [], "subscriptions": {}}
     with config_path.open("r", encoding="utf-8") as f:
         data = json.load(f)
     if not isinstance(data, dict):
@@ -55,6 +58,7 @@ def load_config(config_path: Path) -> dict[str, Any]:
     if not isinstance(servers, list):
         raise ValueError("Invalid config: `servers` must be a list.")
     data["servers"] = servers
+    data["subscriptions"] = normalize_subscriptions(data.get("subscriptions"))
     return data
 
 
@@ -111,6 +115,74 @@ def build_quick_ports(current_port: int | None) -> list[int]:
     return []
 
 
+def normalize_token(raw_token: Any) -> str:
+    if raw_token is None:
+        return ""
+    token = str(raw_token).strip()
+    if not token:
+        return ""
+    if len(token) > 64:
+        raise ValueError("`token` length must be <= 64.")
+    for ch in token:
+        if ch.isalnum() or ch in {"-", "_"}:
+            continue
+        raise ValueError("`token` only supports letters, numbers, '-' and '_'.")
+    return token
+
+
+def normalize_server_id_list(raw_ids: Any) -> list[str]:
+    if not isinstance(raw_ids, list):
+        raise ValueError("`server_ids` must be a non-empty array.")
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in raw_ids:
+        server_id = str(raw).strip()
+        if not server_id or server_id in seen:
+            continue
+        out.append(server_id)
+        seen.add(server_id)
+    if not out:
+        raise ValueError("No valid server ids.")
+    return out
+
+
+def normalize_subscriptions(raw_subscriptions: Any) -> dict[str, list[str]]:
+    if raw_subscriptions is None:
+        return {}
+    if not isinstance(raw_subscriptions, dict):
+        raise ValueError("Invalid config: `subscriptions` must be an object.")
+
+    out: dict[str, list[str]] = {}
+    for raw_token, raw_value in raw_subscriptions.items():
+        token = normalize_token(raw_token)
+        if not token:
+            continue
+
+        value = raw_value
+        if isinstance(raw_value, dict):
+            value = raw_value.get("server_ids")
+        if not isinstance(value, list):
+            continue
+        try:
+            server_ids = normalize_server_id_list(value)
+        except ValueError:
+            continue
+        out[token] = server_ids
+    return out
+
+
+def build_new_token(existing_tokens: set[str]) -> str:
+    for _ in range(20):
+        token = secrets.token_urlsafe(9).replace("=", "")
+        if token and token not in existing_tokens:
+            return token
+    while True:
+        token = f"sub-{secrets.token_hex(6)}"
+        if token not in existing_tokens:
+            return token
+
+
 def find_server(servers: list[dict[str, Any]], server_id: str) -> dict[str, Any]:
     for server in servers:
         if server.get("id") == server_id:
@@ -164,6 +236,44 @@ def clean_auth_view(config: dict[str, Any]) -> dict[str, str]:
     return {"username": username, "password": password}
 
 
+def select_servers_by_ids(servers: list[dict[str, Any]], server_ids: list[str]) -> list[dict[str, Any]]:
+    wanted = {x for x in server_ids if x}
+    selected = [s for s in servers if s.get("id") in wanted]
+    return selected
+
+
+def build_trojan_link(server: dict[str, Any]) -> str:
+    server_id = str(server.get("id", "")).strip() or "unknown"
+    server_name = str(server.get("name", "")).strip() or server_id
+    raw_addr = server.get("addr")
+    addr = str(raw_addr).strip() if raw_addr is not None else ""
+    if not addr:
+        raise ValueError(f"Server `{server_id}` missing `addr`.")
+
+    try:
+        port = parse_current_port(server.get("current_port"))
+    except ValueError:
+        port = None
+    if port is None:
+        raise ValueError(f"Server `{server_id}` missing valid `current_port`.")
+
+    raw_password = server.get("trojan_password")
+    password = str(raw_password) if raw_password is not None else ""
+    if not password:
+        raise ValueError(f"Server `{server_id}` missing `trojan_password`.")
+
+    userinfo = quote(password, safe="")
+    fragment = quote(server_name, safe="")
+    return f"trojan://{userinfo}@{addr}:{port}?security=tls&headerType=none&type=tcp#{fragment}"
+
+
+def build_subscription_links(selected: list[dict[str, Any]]) -> list[str]:
+    links: list[str] = []
+    for server in selected:
+        links.append(build_trojan_link(server))
+    return links
+
+
 def is_safe_next(next_url: str) -> bool:
     if not next_url:
         return False
@@ -177,7 +287,7 @@ def is_safe_next(next_url: str) -> bool:
 @app.before_request
 def require_login():
     endpoint = request.endpoint or ""
-    if endpoint in {"login", "logout", "static"}:
+    if endpoint in {"login", "logout", "static", "subscription_content"}:
         return None
 
     creds = get_auth_credentials(get_config_path())
@@ -222,6 +332,7 @@ def normalize_servers(raw_servers: Any) -> list[dict[str, Any]]:
         raw_ssh_target = raw.get("ssh_target")
         raw_current_port = raw.get("current_port")
         raw_addr = raw.get("addr")
+        raw_trojan_password = raw.get("trojan_password")
 
         name = str(raw_name).strip() if raw_name is not None else server_id
         if not name:
@@ -231,6 +342,9 @@ def normalize_servers(raw_servers: Any) -> list[dict[str, Any]]:
         status_template = str(raw_status_template).strip() if raw_status_template is not None else ""
         ssh_target = str(raw_ssh_target).strip() if raw_ssh_target is not None else ""
         addr = str(raw_addr).strip() if raw_addr is not None else ""
+        trojan_password = str(raw_trojan_password) if raw_trojan_password is not None else ""
+        if any(ch.isspace() for ch in trojan_password):
+            raise ValueError(f"Server `{server_id}`: `trojan_password` must not contain whitespace.")
         try:
             current_port = parse_current_port(raw_current_port)
         except ValueError:
@@ -262,6 +376,8 @@ def normalize_servers(raw_servers: Any) -> list[dict[str, Any]]:
             item["current_port"] = current_port
         if addr:
             item["addr"] = addr
+        if trojan_password:
+            item["trojan_password"] = trojan_password
 
         normalized.append(item)
     return normalized
@@ -276,6 +392,7 @@ def clean_server_view(item: dict[str, Any]) -> dict[str, Any]:
     raw_desc = item.get("description")
     raw_current_port = item.get("current_port")
     raw_addr = item.get("addr")
+    raw_trojan_password = item.get("trojan_password")
 
     server_id = str(raw_id).strip() if raw_id is not None else ""
     name = str(raw_name).strip() if raw_name is not None else ""
@@ -284,6 +401,7 @@ def clean_server_view(item: dict[str, Any]) -> dict[str, Any]:
     status_template = str(raw_status_template).strip() if raw_status_template is not None else ""
     description = str(raw_desc).strip() if raw_desc is not None else ""
     addr = str(raw_addr).strip() if raw_addr is not None else ""
+    trojan_password = str(raw_trojan_password) if raw_trojan_password is not None else ""
     try:
         current_port = parse_current_port(raw_current_port) if raw_current_port is not None else None
     except ValueError:
@@ -298,6 +416,7 @@ def clean_server_view(item: dict[str, Any]) -> dict[str, Any]:
         "current_port": current_port,
         "quick_ports": build_quick_ports(current_port),
         "addr": addr,
+        "trojan_password": trojan_password,
     }
 
 
@@ -754,6 +873,101 @@ def network_check():
     data["message"] = "Network is reachable." if data.get("network_ok") else data.get("network_message", "Network check failed.")
     data["ok"] = bool(data.get("network_ok"))
     return jsonify(data), 200
+
+
+@app.post("/api/subscription-link")
+def subscription_link():
+    payload = request.get_json(silent=True) or {}
+    raw_ids = payload.get("server_ids")
+    raw_token = payload.get("token")
+    try:
+        server_ids = normalize_server_id_list(raw_ids)
+        custom_token = normalize_token(raw_token)
+    except ValueError as exc:
+        return jsonify({"ok": False, "message": str(exc)}), 400
+
+    config_path = get_config_path()
+    try:
+        config = load_config(config_path)
+        servers = config.get("servers", [])
+        subscriptions = normalize_subscriptions(config.get("subscriptions"))
+    except ValueError as exc:
+        return jsonify({"ok": False, "message": str(exc)}), 400
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"ok": False, "message": f"Config error: {exc}"}), 500
+
+    selected = select_servers_by_ids(servers, server_ids)
+    if len(selected) != len(server_ids):
+        missing = [x for x in server_ids if x not in {str(s.get("id", "")) for s in selected}]
+        return jsonify({"ok": False, "message": f"Server not found: {', '.join(missing)}"}), 400
+
+    try:
+        links = build_subscription_links(selected)
+    except ValueError as exc:
+        return jsonify({"ok": False, "message": str(exc)}), 400
+
+    existing_tokens = set(subscriptions.keys())
+    token = custom_token or build_new_token(existing_tokens)
+    overwritten = token in subscriptions
+    subscriptions[token] = server_ids
+    config["subscriptions"] = subscriptions
+    try:
+        save_config(config_path, config)
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"ok": False, "message": f"Save failed: {exc}"}), 500
+
+    sub_url = request.host_url.rstrip("/") + url_for("subscription_content", token=token)
+    message = "Subscription URL generated."
+    if overwritten:
+        message = "Token existed. Replaced with latest server selection."
+    return jsonify(
+        {
+            "ok": True,
+            "token": token,
+            "overwritten": overwritten,
+            "url": sub_url,
+            "server_count": len(selected),
+            "server_ids": server_ids,
+            "links": links,
+            "message": message,
+        }
+    )
+
+
+@app.get("/sub/<token>")
+def subscription_content(token: str):
+    try:
+        clean_token = normalize_token(token)
+    except ValueError as exc:
+        return Response(f"invalid subscription token: {exc}\n", mimetype="text/plain"), 400
+    if not clean_token:
+        return Response("invalid subscription token: empty token\n", mimetype="text/plain"), 400
+
+    try:
+        config = load_config(get_config_path())
+        servers = config.get("servers", [])
+        subscriptions = normalize_subscriptions(config.get("subscriptions"))
+    except Exception as exc:  # noqa: BLE001
+        return Response(f"config error: {exc}\n", mimetype="text/plain"), 500
+
+    server_ids = subscriptions.get(clean_token)
+    if not server_ids:
+        return Response("subscription token not found\n", mimetype="text/plain"), 404
+
+    selected = select_servers_by_ids(servers, server_ids)
+    if len(selected) != len(server_ids):
+        existing = {str(s.get("id", "")) for s in selected}
+        missing = [x for x in server_ids if x not in existing]
+        return Response(f"server not found: {', '.join(missing)}\n", mimetype="text/plain"), 400
+
+    try:
+        links = build_subscription_links(selected)
+    except ValueError as exc:
+        return Response(f"build link failed: {exc}\n", mimetype="text/plain"), 400
+
+    plain = "\n".join(links)
+    encoded = base64.b64encode(plain.encode("utf-8")).decode("utf-8")
+    return Response(encoded + "\n", mimetype="text/plain")
 
 
 @app.get("/api/servers")

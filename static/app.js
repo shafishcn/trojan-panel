@@ -176,6 +176,19 @@ async function checkNetwork(serverId, button, resultEl) {
   }
 }
 
+function formatSubscriptionResult(data) {
+  const lines = [];
+  lines.push(`status: ${data.ok ? "success" : "failed"}`);
+  if (data.message) lines.push(`message: ${data.message}`);
+  if (data.token) lines.push(`token: ${data.token}`);
+  if (data.overwritten !== undefined) lines.push(`overwritten: ${data.overwritten ? "yes" : "no"}`);
+  if (data.server_count !== undefined) lines.push(`server count: ${data.server_count}`);
+  if (Array.isArray(data.server_ids) && data.server_ids.length) lines.push(`server ids: ${data.server_ids.join(", ")}`);
+  if (data.url) lines.push(`subscription url: ${data.url}`);
+  if (Array.isArray(data.links) && data.links.length) lines.push(`links:\n${data.links.join("\n")}`);
+  return lines.join("\n");
+}
+
 function parseInitialServers() {
   const el = document.querySelector("#initial-servers");
   if (!el) return [];
@@ -218,6 +231,7 @@ function createEditorItem(server, templateEl) {
     statusTemplate: item.querySelector('input[data-field="status_command_template"]'),
     currentPort: item.querySelector('input[data-field="current_port"]'),
     addr: item.querySelector('input[data-field="addr"]'),
+    trojanPassword: item.querySelector('input[data-field="trojan_password"]'),
     description: item.querySelector('input[data-field="description"]'),
   };
 
@@ -230,6 +244,7 @@ function createEditorItem(server, templateEl) {
   if (fields.statusTemplate) fields.statusTemplate.value = server.status_command_template || "";
   if (fields.currentPort) fields.currentPort.value = server.current_port || "";
   if (fields.addr) fields.addr.value = server.addr || "";
+  if (fields.trojanPassword) fields.trojanPassword.value = server.trojan_password || "";
   if (fields.description) fields.description.value = server.description || "";
 
   const removeBtn = item.querySelector(".remove-server-btn");
@@ -255,6 +270,7 @@ function collectServerEditors(listEl) {
       status_command_template: getValue("status_command_template"),
       current_port: getValue("current_port"),
       addr: getValue("addr"),
+      trojan_password: getValue("trojan_password"),
       description: getValue("description"),
     };
   });
@@ -272,7 +288,7 @@ function initConfigEditor() {
 
   const initial = initialServers.length
     ? initialServers
-    : [{ id: "", name: "", command_template: "", status_command_template: "", current_port: "", addr: "", description: "" }];
+    : [{ id: "", name: "", command_template: "", status_command_template: "", current_port: "", addr: "", trojan_password: "", description: "" }];
 
   for (const server of initial) {
     const node = createEditorItem(server, templateEl);
@@ -284,7 +300,7 @@ function initConfigEditor() {
 
   addBtn.addEventListener("click", () => {
     const node = createEditorItem(
-      { id: "", name: "", command_template: "", status_command_template: "", current_port: "", addr: "", description: "" },
+      { id: "", name: "", command_template: "", status_command_template: "", current_port: "", addr: "", trojan_password: "", description: "" },
       templateEl,
     );
     if (node) listEl.appendChild(node);
@@ -320,6 +336,10 @@ function initConfigEditor() {
         markResult(resultEl, false, `第 ${i + 1} 行检测地址不能包含空白字符。`);
         return;
       }
+      if (s.trojan_password && /\s/.test(s.trojan_password)) {
+        markResult(resultEl, false, `第 ${i + 1} 行 Trojan 密码不能包含空白字符。`);
+        return;
+      }
     }
 
     if ((authUsername && !authPassword) || (!authUsername && authPassword)) {
@@ -348,6 +368,66 @@ function initConfigEditor() {
       }
       markResult(resultEl, true, "保存成功。");
       window.setTimeout(() => window.location.reload(), 600);
+    } catch (err) {
+      if (err instanceof UnauthorizedError) return;
+      markResult(resultEl, false, `request error: ${err}`);
+    } finally {
+      restore();
+    }
+  });
+}
+
+function initSubscriptionPanel() {
+  const genBtn = document.querySelector("#sub-generate-btn");
+  const selectAllBtn = document.querySelector("#sub-select-all-btn");
+  const clearBtn = document.querySelector("#sub-clear-btn");
+  const tokenInput = document.querySelector("#sub-token-input");
+  const resultEl = document.querySelector("#sub-result");
+  if (!genBtn || !selectAllBtn || !clearBtn || !resultEl) return;
+
+  const allChecks = () => Array.from(document.querySelectorAll(".server-card .sub-select"));
+
+  selectAllBtn.addEventListener("click", () => {
+    for (const el of allChecks()) el.checked = true;
+    markResult(resultEl, null, "已全选服务器。");
+  });
+
+  clearBtn.addEventListener("click", () => {
+    for (const el of allChecks()) el.checked = false;
+    markResult(resultEl, null, "已清空选择。");
+  });
+
+  genBtn.addEventListener("click", async () => {
+    const selectedIds = allChecks()
+      .filter((el) => el.checked)
+      .map((el) => {
+        const card = el.closest(".server-card");
+        return card ? card.getAttribute("data-server-id") : "";
+      })
+      .filter((x) => Boolean(x));
+
+    if (!selectedIds.length) {
+      markResult(resultEl, false, "请先勾选至少一个服务器。");
+      return;
+    }
+
+    const token = tokenInput ? tokenInput.value.trim() : "";
+    if (token && !/^[A-Za-z0-9_-]{1,64}$/.test(token)) {
+      markResult(resultEl, false, "自定义 Token 只能包含字母、数字、-、_，且长度不超过 64。");
+      return;
+    }
+
+    const restore = setButtonLoading(genBtn, "生成中...");
+    markResult(resultEl, null, "正在生成订阅访问地址...");
+    try {
+      const resp = await fetch("/api/subscription-link", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ server_ids: selectedIds, token }),
+      });
+      const data = await parseApiResponse(resp);
+      if (tokenInput && data.token) tokenInput.value = String(data.token);
+      markResult(resultEl, Boolean(data.ok), formatSubscriptionResult(data));
     } catch (err) {
       if (err instanceof UnauthorizedError) return;
       markResult(resultEl, false, `request error: ${err}`);
@@ -408,3 +488,4 @@ function initServerCards() {
 
 initConfigEditor();
 initServerCards();
+initSubscriptionPanel();

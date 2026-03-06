@@ -396,9 +396,31 @@ body {
   gap: 4px;
 }
 
+.server-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .server-head h2 {
   margin: 0;
   font-size: 1.15rem;
+}
+
+.sub-select-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #c5ddff;
+  font-size: 0.82rem;
+  user-select: none;
+}
+
+.sub-select-wrap input {
+  width: 15px;
+  height: 15px;
+  accent-color: #4fd1c5;
 }
 
 .server-head span {
@@ -576,6 +598,38 @@ body {
 
 .result.err {
   border-color: rgba(255, 123, 123, 0.7);
+}
+
+.sub-panel .result {
+  min-height: 120px;
+}
+
+.sub-token-row {
+  margin-top: 10px;
+  margin-bottom: 10px;
+  display: grid;
+  gap: 6px;
+}
+
+.sub-token-row label {
+  color: #b8ccf3;
+  font-size: 0.86rem;
+}
+
+.sub-token-row input {
+  width: min(520px, 100%);
+  border: 1px solid var(--line);
+  background: rgba(11, 20, 37, 0.8);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 9px 10px;
+  font-size: 0.92rem;
+  outline: none;
+}
+
+.sub-token-row input:focus {
+  border-color: var(--accent-2);
+  box-shadow: 0 0 0 3px rgba(124, 217, 255, 0.2);
 }
 
 .login-shell {

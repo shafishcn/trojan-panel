@@ -7,6 +7,7 @@
 - 单台服务器端口切换（执行 `ssh xxx trojan port $1`）
 - 单台检查 Trojan 服务运行状态（执行 `trojan status`）
 - 可选登录鉴权（账号密码保存到 `servers.json`）
+- Trojan 订阅地址生成（单选/多选服务器，返回 trojan 链接 base64）
 
 ## 2. 环境要求
 
@@ -52,6 +53,7 @@ TROJAN_PANEL_HOST=127.0.0.1 TROJAN_PANEL_PORT=8000 .venv/bin/python app.py
     "username": "admin",
     "password": "change-me"
   },
+  "subscriptions": {},
   "servers": []
 }
 ```
@@ -62,6 +64,7 @@ TROJAN_PANEL_HOST=127.0.0.1 TROJAN_PANEL_PORT=8000 .venv/bin/python app.py
 - `name`：显示名称，建议填写
 - `description`：备注，可选
 - `addr`：对外检测地址（域名或 IP），用于网络可达性探测
+- `trojan_password`：该服务器的 Trojan 密码（用于生成订阅链接）
 - `current_port`：当前使用端口，可选（建议填写）
 - `command_template`：端口切换命令模板，必填，必须包含 `$1`
 - `status_command_template`：状态检查命令，可选（不填则自动从 `command_template` 推导）
@@ -72,6 +75,11 @@ TROJAN_PANEL_HOST=127.0.0.1 TROJAN_PANEL_PORT=8000 .venv/bin/python app.py
 - `auth.password`：登录密码
 - 两个都为空或未设置：关闭登录校验
 - 两个都填写：启用登录校验（访问页面与 API 都需要先登录）
+
+顶层 `subscriptions` 字段说明：
+
+- 由系统自动维护，记录 `token -> server_ids` 映射
+- 你可以不手工修改
 
 说明：快捷端口不再通过配置指定，系统会根据 `current_port` 自动生成 `current_port + 1`。
 
@@ -135,6 +143,29 @@ TROJAN_PANEL_HOST=127.0.0.1 TROJAN_PANEL_PORT=8000 .venv/bin/python app.py
 - 关闭方式：把登录账号和密码都清空并保存
 - 开启后，未登录访问会自动跳转 `/login`
 - 页面右上角可点击“退出登录”
+
+### 5.6 Trojan 订阅地址（Base64）
+
+- 在操作页每个服务器卡片勾选“订阅”（可单选或多选）
+- 可填写“自定义 Token”（可选）
+- 点击页面顶部“生成访问地址”
+- 面板会返回一个订阅 URL（形如 `/sub/<token>`）
+- 在浏览器或客户端访问该 URL，返回内容为所选服务器 trojan 链接换行后再做 base64 的结果
+- 如果自定义 Token 已存在，会被最新选择覆盖（以最新为准）
+
+链接格式：
+
+```text
+trojan://<trojan_password>@<addr>:<current_port>?security=tls&headerType=none&type=tcp#<name>
+```
+
+示例：
+
+```text
+trojan://tffats110@tj10.tffats.top:25092?security=tls&headerType=none&type=tcp#tj10
+```
+
+注意：如果某台服务器未配置 `addr`、`current_port` 或 `trojan_password`，生成会失败并提示具体缺失字段。
 
 ## 6. 部署操作（生产环境）
 
@@ -274,6 +305,7 @@ sudo systemctl restart trojan-panel
 - `id` 为空或重复
 - `command_template` 未包含 `$1`
 - `addr` 含空白字符
+- `trojan_password` 含空白字符
 - `current_port` 不是 1-65535 的整数
 - 登录账号和密码只填了一个（必须同时填写或同时留空）
 
