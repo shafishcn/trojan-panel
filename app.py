@@ -840,9 +840,20 @@ def switch_port():
             result["message"] = f"Port switched, but failed to save current_port: {exc}"
             result["current_port"] = port
             result["quick_ports"] = build_quick_ports(port)
+            result.update(run_network_check(server))
             return jsonify(result), 500
         result["current_port"] = port
         result["quick_ports"] = build_quick_ports(port)
+    else:
+        try:
+            current_port = parse_current_port(server.get("current_port"))
+        except ValueError:
+            current_port = None
+        result["current_port"] = current_port
+        result["quick_ports"] = build_quick_ports(current_port)
+
+    # Auto-run network check after switching port (or attempted switch).
+    result.update(run_network_check(server))
 
     if result["ok"]:
         code = 200

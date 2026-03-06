@@ -6,6 +6,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import app as app_module
 
@@ -222,6 +223,70 @@ class SubscriptionTokenManagementTests(unittest.TestCase):
         location = resp.headers.get("Location", "")
         self.assertTrue(location.startswith("/login?next="))
         self.assertIn("/subscriptions", location)
+
+    def test_switch_port_auto_runs_network_check_on_success(self) -> None:
+        switch_result = {
+            "ok": True,
+            "message": "Port switched successfully.",
+            "command": "ssh hk trojan port 9527",
+            "returncode": 0,
+            "stdout": "",
+            "stderr": "",
+        }
+        network_result = {
+            "network_checked": True,
+            "network_ok": True,
+            "network_status": "reachable",
+            "network_target": "hk.example.com:9527",
+            "network_message": "Network is reachable.",
+        }
+        with (
+            patch.object(app_module, "run_switch_command", return_value=switch_result) as mock_switch,
+            patch.object(app_module, "run_network_check", return_value=network_result) as mock_network,
+        ):
+            resp = self.client.post("/api/switch-port", json={"server_id": "hk-main", "port": 9527})
+
+        self.assertEqual(resp.status_code, 200)
+        body = resp.get_json()
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["current_port"], 9527)
+        self.assertEqual(body["quick_ports"], [9528])
+        self.assertTrue(body["network_checked"])
+        self.assertTrue(body["network_ok"])
+        mock_switch.assert_called_once()
+        mock_network.assert_called_once()
+
+    def test_switch_port_auto_runs_network_check_on_failure(self) -> None:
+        switch_result = {
+            "ok": False,
+            "message": "Failed to switch port.",
+            "command": "ssh hk trojan port 9527",
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "boom",
+        }
+        network_result = {
+            "network_checked": True,
+            "network_ok": False,
+            "network_status": "unreachable",
+            "network_target": "hk.example.com:443",
+            "network_message": "Connection timed out.",
+        }
+        with (
+            patch.object(app_module, "run_switch_command", return_value=switch_result) as mock_switch,
+            patch.object(app_module, "run_network_check", return_value=network_result) as mock_network,
+        ):
+            resp = self.client.post("/api/switch-port", json={"server_id": "hk-main", "port": 9527})
+
+        self.assertEqual(resp.status_code, 500)
+        body = resp.get_json()
+        self.assertFalse(body["ok"])
+        self.assertEqual(body["current_port"], 443)
+        self.assertEqual(body["quick_ports"], [444])
+        self.assertTrue(body["network_checked"])
+        self.assertFalse(body["network_ok"])
+        mock_switch.assert_called_once()
+        mock_network.assert_called_once()
 
 
 if __name__ == "__main__":
