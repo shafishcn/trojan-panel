@@ -506,6 +506,24 @@ function initSubscriptionManagerPage() {
     tokenListEl.appendChild(el);
   };
 
+  const buildCopyUrl = (rawUrl) => {
+    try {
+      const parsed = new URL(rawUrl);
+      const host = (parsed.hostname || "").trim().toLowerCase();
+      const isIPv4 = /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host);
+      const isIPv6 = host.includes(":");
+      const isLocalhost = host === "localhost";
+      const isDomain = !isIPv4 && !isIPv6 && !isLocalhost && /[a-z]/i.test(host);
+      if (isDomain) {
+        parsed.protocol = "https:";
+        return { url: parsed.toString(), forcedHttps: true };
+      }
+    } catch (_err) {
+      // Fall through and keep original URL.
+    }
+    return { url: rawUrl, forcedHttps: false };
+  };
+
   const renderList = (items) => {
     tokenListEl.innerHTML = "";
     if (!Array.isArray(items) || !items.length) {
@@ -582,8 +600,13 @@ function initSubscriptionManagerPage() {
           return;
         }
         try {
-          await navigator.clipboard.writeText(url);
-          markResult(resultEl, true, `已复制订阅地址: ${token}`);
+          const copied = buildCopyUrl(url);
+          await navigator.clipboard.writeText(copied.url);
+          if (copied.forcedHttps) {
+            markResult(resultEl, true, `已复制订阅地址: ${token}（域名链接已强制 HTTPS）`);
+          } else {
+            markResult(resultEl, true, `已复制订阅地址: ${token}`);
+          }
         } catch (err) {
           markResult(resultEl, false, `复制失败: ${err}`);
         }
