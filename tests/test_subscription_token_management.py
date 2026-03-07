@@ -30,9 +30,16 @@ class SubscriptionTokenManagementTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self.client = app_module.app.test_client()
+        with app_module.SMS_LOGIN_RUNTIME_LOCK:
+            app_module.SMS_LOGIN_RUNTIME.clear()
         self.write_config(subscriptions={})
 
-    def write_config(self, subscriptions: dict[str, list[str]], auth: dict[str, str] | None = None) -> None:
+    def write_config(
+        self,
+        subscriptions: dict[str, list[str]],
+        auth: dict[str, str] | None = None,
+        sms_login: dict | None = None,
+    ) -> None:
         payload = {
             "servers": [
                 {
@@ -58,6 +65,8 @@ class SubscriptionTokenManagementTests(unittest.TestCase):
         }
         if auth is not None:
             payload["auth"] = auth
+        if sms_login is not None:
+            payload["sms_login"] = sms_login
         with self.config_path.open("w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
             f.write("\n")
@@ -65,6 +74,16 @@ class SubscriptionTokenManagementTests(unittest.TestCase):
     def read_config(self) -> dict:
         with self.config_path.open("r", encoding="utf-8") as f:
             return json.load(f)
+
+    def build_sms_login(self, phones: list[str] | None = None) -> dict:
+        selected_phones = phones or ["13800138000"]
+        return {
+            "enabled": True,
+            "allowed_phones": selected_phones,
+            "sign_name": "速通互联验证码",
+            "template_code": "100001",
+            "template_param": "{\"code\":\"##code##\",\"min\":\"5\"}",
+        }
 
     def test_generate_custom_token_and_list(self) -> None:
         resp = self.client.post(
@@ -205,6 +224,111 @@ class SubscriptionTokenManagementTests(unittest.TestCase):
         body = list_resp.get_json()
         self.assertTrue(body["ok"])
         self.assertEqual(body["count"], 1)
+
+    def test_send_sms_code_requires_whitelisted_phone(self) -> None:
+        self.write_config(
+            subscriptions={},
+            auth={"username": "admin", "password": "pass123"},
+            sms_login=self.build_sms_login(["13800138000"]),
+        )
+        resp = self.client.post("/api/auth/send-sms-code", json={"phone": "13900000000"})
+        self.assertEqual(resp.status_code, 403)
+        body = resp.get_json()
+        self.assertFalse(body["ok"])
+        self.assertIn("未被授权", body["message"])
+
+    def test_send_sms_code_limited_to_two_times_per_day(self) -> None:
+        self.write_config(
+            subscriptions={},
+            auth={"username": "admin", "password": "pass123"},
+            sms_login=self.build_sms_login(["13800138000"]),
+        )
+        with patch.object(app_module, "send_aliyun_sms_code", return_value={"ok": True, "message": "SMS sent."}):
+            first = self.client.post("/api/auth/send-sms-code", json={"phone": "13800138000"})
+            second = self.client.post("/api/auth/send-sms-code", json={"phone": "13800138000"})
+            third = self.client.post("/api/auth/send-sms-code", json={"phone": "13800138000"})
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(third.status_code, 429)
+        self.assertTrue(first.get_json()["ok"])
+        self.assertTrue(second.get_json()["ok"])
+        self.assertFalse(third.get_json()["ok"])
+
+    def test_sms_login_success(self) -> None:
+        self.write_config(
+            subscriptions={"teamA": ["hk-main"]},
+            auth={"username": "admin", "password": "pass123"},
+            sms_login=self.build_sms_login(["13800138000"]),
+        )
+        with (
+            patch.object(app_module, "send_aliyun_sms_code", return_value={"ok": True, "message": "SMS sent."}),
+            patch.object(app_module, "generate_sms_code", return_value="123456"),
+        ):
+            send_resp = self.client.post("/api/auth/send-sms-code", json={"phone": "13800138000"})
+            self.assertEqual(send_resp.status_code, 200)
+
+            login_resp = self.client.post(
+                "/login",
+                data={"login_type": "sms", "phone": "13800138000", "sms_code": "123456", "next": "/"},
+                follow_redirects=False,
+            )
+        self.assertEqual(login_resp.status_code, 302)
+
+        with self.client.session_transaction() as session:
+            self.assertEqual(session.get("username"), "admin")
+            self.assertEqual(session.get("display_user"), "13800138000")
+
+        home_resp = self.client.get("/")
+        self.assertEqual(home_resp.status_code, 200)
+        home_html = home_resp.get_data(as_text=True)
+        self.assertIn("13800138000", home_html)
+        self.assertNotIn("（admin）", home_html)
+
+        list_resp = self.client.get("/api/subscriptions")
+        self.assertEqual(list_resp.status_code, 200)
+        body = list_resp.get_json()
+        self.assertTrue(body["ok"])
+
+    def test_sms_login_fails_twice_then_password_only(self) -> None:
+        self.write_config(
+            subscriptions={},
+            auth={"username": "admin", "password": "pass123"},
+            sms_login=self.build_sms_login(["13800138000"]),
+        )
+        with (
+            patch.object(app_module, "send_aliyun_sms_code", return_value={"ok": True, "message": "SMS sent."}),
+            patch.object(app_module, "generate_sms_code", side_effect=["111111", "222222"]),
+        ):
+            self.assertEqual(self.client.post("/api/auth/send-sms-code", json={"phone": "13800138000"}).status_code, 200)
+            first_login = self.client.post(
+                "/login",
+                data={"login_type": "sms", "phone": "13800138000", "sms_code": "000000", "next": "/"},
+                follow_redirects=False,
+            )
+            self.assertEqual(first_login.status_code, 200)
+
+            self.assertEqual(self.client.post("/api/auth/send-sms-code", json={"phone": "13800138000"}).status_code, 200)
+            second_login = self.client.post(
+                "/login",
+                data={"login_type": "sms", "phone": "13800138000", "sms_code": "000000", "next": "/"},
+                follow_redirects=False,
+            )
+            self.assertEqual(second_login.status_code, 200)
+            second_html = second_login.get_data(as_text=True)
+            self.assertIn("仅可使用账号密码登录", second_html)
+
+        blocked_send = self.client.post("/api/auth/send-sms-code", json={"phone": "13800138000"})
+        self.assertEqual(blocked_send.status_code, 429)
+        blocked_body = blocked_send.get_json()
+        self.assertFalse(blocked_body["ok"])
+
+        password_login = self.client.post(
+            "/login",
+            data={"login_type": "password", "username": "admin", "password": "pass123", "next": "/"},
+            follow_redirects=False,
+        )
+        self.assertEqual(password_login.status_code, 302)
 
     def test_subscriptions_page_renders(self) -> None:
         resp = self.client.get("/subscriptions")

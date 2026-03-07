@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import datetime
 import hmac
 import json
 import os
@@ -8,6 +9,8 @@ import secrets
 import shlex
 import socket
 import subprocess
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
@@ -43,6 +46,11 @@ SSH_OPTIONS_WITH_ARG = {
     "-W",
     "-w",
 }
+SMS_CODE_TTL_SECONDS = 300
+SMS_DAILY_SEND_LIMIT = 2
+SMS_CODE_LENGTH = 6
+SMS_LOGIN_RUNTIME: dict[str, dict[str, Any]] = {}
+SMS_LOGIN_RUNTIME_LOCK = threading.Lock()
 
 
 def load_config(config_path: Path) -> dict[str, Any]:
@@ -59,6 +67,7 @@ def load_config(config_path: Path) -> dict[str, Any]:
         raise ValueError("Invalid config: `servers` must be a list.")
     data["servers"] = servers
     data["subscriptions"] = normalize_subscriptions(data.get("subscriptions"))
+    data["sms_login"] = normalize_sms_login(data.get("sms_login"))
     return data
 
 
@@ -250,6 +259,261 @@ def clean_auth_view(config: dict[str, Any]) -> dict[str, str]:
     return {"username": username, "password": password}
 
 
+def normalize_phone_number(raw_phone: Any) -> str:
+    if raw_phone is None:
+        return ""
+    digits = "".join(ch for ch in str(raw_phone) if ch.isdigit())
+    if digits.startswith("86") and len(digits) == 13:
+        digits = digits[2:]
+    return digits
+
+
+def normalize_sms_login(raw_sms_login: Any) -> dict[str, Any] | None:
+    if raw_sms_login is None:
+        return None
+    if not isinstance(raw_sms_login, dict):
+        raise ValueError("`sms_login` must be an object.")
+
+    enabled = bool(raw_sms_login.get("enabled", True))
+    raw_allowed = raw_sms_login.get("allowed_phones", [])
+    if raw_allowed is None:
+        raw_allowed = []
+    if not isinstance(raw_allowed, list):
+        raise ValueError("`sms_login.allowed_phones` must be an array.")
+
+    raw_aliyun = raw_sms_login.get("aliyun")
+    if raw_aliyun is not None and not isinstance(raw_aliyun, dict):
+        raise ValueError("`sms_login.aliyun` must be an object.")
+    if raw_aliyun is None:
+        raw_aliyun = {}
+
+    allowed_phones: list[str] = []
+    seen_phones: set[str] = set()
+    for raw_phone in raw_allowed:
+        phone = normalize_phone_number(raw_phone)
+        if not phone:
+            continue
+        if phone in seen_phones:
+            continue
+        if len(phone) < 6 or len(phone) > 15:
+            raise ValueError(f"`sms_login.allowed_phones` contains invalid phone: {raw_phone}")
+        allowed_phones.append(phone)
+        seen_phones.add(phone)
+
+    aliyun: dict[str, str] = {
+        "access_key_id": "",
+        "access_key_secret": "",
+        "sign_name": "",
+        "template_code": "",
+        "template_param": "{\"code\":\"##code##\",\"min\":\"5\"}",
+        "endpoint": "dypnsapi.aliyuncs.com",
+    }
+    for key in ("access_key_id", "access_key_secret", "sign_name", "template_code", "template_param", "endpoint"):
+        raw_value = raw_sms_login.get(key)
+        if raw_value is None:
+            raw_value = raw_aliyun.get(key)
+        if raw_value is None:
+            continue
+        value = str(raw_value).strip()
+        if value:
+            aliyun[key] = value
+
+    if enabled:
+        if not allowed_phones:
+            raise ValueError("`sms_login.allowed_phones` must contain at least one phone.")
+        missing_fields = [key for key in ("sign_name", "template_code", "template_param") if not aliyun[key]]
+        if missing_fields:
+            raise ValueError(f"`sms_login.aliyun` missing fields: {', '.join(missing_fields)}")
+
+    return {
+        "enabled": enabled,
+        "allowed_phones": allowed_phones,
+        "daily_send_limit": SMS_DAILY_SEND_LIMIT,
+        "code_ttl_seconds": SMS_CODE_TTL_SECONDS,
+        "aliyun": aliyun,
+    }
+
+
+def get_sms_login_config(config_path: Path) -> dict[str, Any] | None:
+    try:
+        config = load_config(config_path)
+    except Exception:  # noqa: BLE001
+        return None
+    sms_login = config.get("sms_login")
+    if not isinstance(sms_login, dict):
+        return None
+    if not sms_login.get("enabled"):
+        return None
+    return sms_login
+
+
+def mask_phone(phone: str) -> str:
+    if len(phone) <= 7:
+        return phone
+    return f"{phone[:3]}****{phone[-4:]}"
+
+
+def _get_sms_runtime_state(phone: str) -> dict[str, Any]:
+    today = datetime.date.today().isoformat()
+    state = SMS_LOGIN_RUNTIME.get(phone)
+    if not isinstance(state, dict) or state.get("date") != today:
+        state = {
+            "date": today,
+            "send_count": 0,
+            "failed_count": 0,
+            "code": "",
+            "expires_at": 0.0,
+        }
+        SMS_LOGIN_RUNTIME[phone] = state
+    return state
+
+
+def generate_sms_code() -> str:
+    return f"{secrets.randbelow(10 ** SMS_CODE_LENGTH):0{SMS_CODE_LENGTH}d}"
+
+
+def render_sms_template_param(raw_template_param: str, code: str) -> str:
+    if "##code##" in raw_template_param:
+        return raw_template_param.replace("##code##", code)
+    try:
+        data = json.loads(raw_template_param)
+    except json.JSONDecodeError:
+        return raw_template_param
+    if not isinstance(data, dict):
+        return raw_template_param
+    if "code" not in data:
+        data["code"] = code
+    return json.dumps(data, separators=(",", ":"), ensure_ascii=False)
+
+
+def map_aliyun_sms_error(message: str, recommend: str = "") -> str:
+    lower_message = message.lower()
+    if "timed out" in lower_message or "timeout" in lower_message:
+        return "阿里云短信服务请求超时，请稍后重试。"
+    if "connection refused" in lower_message or "name or service not known" in lower_message:
+        return "阿里云短信服务连接失败，请检查网络或 endpoint 配置。"
+    if (
+        "forbidden.nopermission" in lower_message
+        or "you are not authorized to perform this action" in lower_message
+        or "code: 403" in lower_message
+        or "not authorized" in lower_message
+    ):
+        return "阿里云账号无短信发送权限（Dypnsapi）。请为该 AK 开通并授权短信相关权限。"
+    if recommend:
+        return f"阿里云短信请求失败：{message}（{recommend}）"
+    return f"Aliyun SMS request failed: {message}"
+
+
+def send_aliyun_sms_code(phone: str, code: str, sms_login: dict[str, Any]) -> dict[str, Any]:
+    try:
+        from alibabacloud_dypnsapi20170525 import models as dypnsapi_20170525_models
+        from alibabacloud_dypnsapi20170525.client import Client as Dypnsapi20170525Client
+        from alibabacloud_tea_openapi import models as open_api_models
+        from alibabacloud_tea_util import models as util_models
+    except ModuleNotFoundError:
+        return {"ok": False, "message": "缺少阿里云短信依赖，请先安装 requirements.txt。"}
+
+    aliyun = sms_login.get("aliyun", {})
+    sign_name = str(aliyun.get("sign_name", "")).strip()
+    template_code = str(aliyun.get("template_code", "")).strip()
+    raw_template_param = str(aliyun.get("template_param", "{\"code\":\"##code##\",\"min\":\"5\"}")).strip()
+    endpoint = str(aliyun.get("endpoint", "dypnsapi.aliyuncs.com")).strip() or "dypnsapi.aliyuncs.com"
+    endpoint = endpoint.removeprefix("https://").removeprefix("http://").strip("/")
+    template_param = render_sms_template_param(raw_template_param, code)
+    access_key_id = str(aliyun.get("access_key_id", "")).strip() or str(os.getenv("ALIBABA_CLOUD_ACCESS_KEY_ID", "")).strip()
+    access_key_secret = str(aliyun.get("access_key_secret", "")).strip() or str(
+        os.getenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "")
+    ).strip()
+    if not access_key_id or not access_key_secret:
+        return {
+            "ok": False,
+            "message": "未配置阿里云 AK/SK，请在 servers.json 的 sms_login 中设置 access_key_id/access_key_secret，或配置环境变量 ALIBABA_CLOUD_ACCESS_KEY_ID/ALIBABA_CLOUD_ACCESS_KEY_SECRET。",
+        }
+
+    config = open_api_models.Config(
+        access_key_id=access_key_id,
+        access_key_secret=access_key_secret,
+    )
+    config.endpoint = endpoint
+    client = Dypnsapi20170525Client(config)
+    send_sms_verify_code_request = dypnsapi_20170525_models.SendSmsVerifyCodeRequest(
+        sign_name=sign_name,
+        template_code=template_code,
+        phone_number=phone,
+        template_param=template_param,
+    )
+    runtime = util_models.RuntimeOptions(
+        autoretry=True,
+        max_attempts=2,
+        backoff_policy="no",
+        connect_timeout=7000,
+        read_timeout=15000,
+    )
+    try:
+        resp = client.send_sms_verify_code_with_options(send_sms_verify_code_request, runtime)
+    except Exception as exc:  # noqa: BLE001
+        message = str(getattr(exc, "message", str(exc)))
+        recommend = ""
+        data = getattr(exc, "data", None)
+        if isinstance(data, dict):
+            recommend = str(data.get("Recommend", "")).strip()
+        return {"ok": False, "message": map_aliyun_sms_error(message, recommend)}
+
+    body = getattr(resp, "body", None)
+    provider_code = str(getattr(body, "code", "") or getattr(body, "Code", "")).strip()
+    provider_message = str(getattr(body, "message", "") or getattr(body, "Message", "")).strip()
+    request_id = str(getattr(body, "request_id", "") or getattr(body, "RequestId", "")).strip()
+    success_value = getattr(body, "success", None)
+    provider_success = bool(success_value) if isinstance(success_value, bool) else False
+    if provider_code.upper() == "OK" or provider_success:
+        return {"ok": True, "message": "SMS sent.", "request_id": request_id}
+
+    message = provider_message or provider_code or "Unknown provider error."
+    return {"ok": False, "message": map_aliyun_sms_error(message), "request_id": request_id}
+
+
+def login_with_password(username: str, password: str, creds: tuple[str, str]) -> bool:
+    user_ok = hmac.compare_digest(username, creds[0])
+    pass_ok = hmac.compare_digest(password, creds[1])
+    return bool(user_ok and pass_ok)
+
+
+def login_with_sms(phone: str, code: str, sms_login: dict[str, Any]) -> tuple[bool, str]:
+    allowed_phones = {str(x) for x in sms_login.get("allowed_phones", []) if str(x)}
+    if phone not in allowed_phones:
+        return False, "该手机号未被授权登录。"
+
+    if len(code) != SMS_CODE_LENGTH or not code.isdigit():
+        return False, "验证码格式错误。"
+
+    limit = int(sms_login.get("daily_send_limit", SMS_DAILY_SEND_LIMIT))
+    now_ts = time.time()
+    with SMS_LOGIN_RUNTIME_LOCK:
+        state = _get_sms_runtime_state(phone)
+        if int(state.get("failed_count", 0)) >= limit:
+            return False, "今日验证码已全部验证失败，仅可使用账号密码登录。"
+        current_code = str(state.get("code", ""))
+        if not current_code:
+            return False, "请先发送验证码。"
+        expires_at = float(state.get("expires_at", 0))
+        if now_ts > expires_at:
+            state["code"] = ""
+            state["expires_at"] = 0.0
+            return False, "验证码已过期，请重新发送。"
+        if hmac.compare_digest(code, current_code):
+            state["code"] = ""
+            state["expires_at"] = 0.0
+            state["failed_count"] = 0
+            return True, ""
+
+        state["code"] = ""
+        state["expires_at"] = 0.0
+        state["failed_count"] = int(state.get("failed_count", 0)) + 1
+        if int(state.get("failed_count", 0)) >= limit:
+            return False, "今日验证码已全部验证失败，仅可使用账号密码登录。"
+        return False, "验证码错误。"
+
+
 def select_servers_by_ids(servers: list[dict[str, Any]], server_ids: list[str]) -> list[dict[str, Any]]:
     wanted = {x for x in server_ids if x}
     selected = [s for s in servers if s.get("id") in wanted]
@@ -298,10 +562,17 @@ def is_safe_next(next_url: str) -> bool:
     return True
 
 
+def get_session_display_user() -> str:
+    display_user = str(session.get("display_user", "")).strip()
+    if display_user:
+        return display_user
+    return str(session.get("username", "")).strip()
+
+
 @app.before_request
 def require_login():
     endpoint = request.endpoint or ""
-    if endpoint in {"login", "logout", "static", "subscription_content"}:
+    if endpoint in {"login", "logout", "send_sms_code", "static", "subscription_content"}:
         return None
 
     creds = get_auth_credentials(get_config_path())
@@ -709,7 +980,7 @@ def index():
         config = load_config(config_path)
         servers = config.get("servers", [])
         auth_enabled = get_auth_credentials(config_path) is not None
-        current_user = str(session.get("username", "")).strip()
+        current_user = get_session_display_user()
     except Exception as exc:  # noqa: BLE001
         error = str(exc)
 
@@ -737,7 +1008,7 @@ def servers_page():
         servers = config.get("servers", [])
         auth = clean_auth_view(config)
         auth_enabled = get_auth_credentials(config_path) is not None
-        current_user = str(session.get("username", "")).strip()
+        current_user = get_session_display_user()
     except Exception as exc:  # noqa: BLE001
         error = str(exc)
 
@@ -762,7 +1033,7 @@ def subscriptions_page():
     try:
         _ = load_config(config_path)
         auth_enabled = get_auth_credentials(config_path) is not None
-        current_user = str(session.get("username", "")).strip()
+        current_user = get_session_display_user()
     except Exception as exc:  # noqa: BLE001
         error = str(exc)
 
@@ -775,11 +1046,71 @@ def subscriptions_page():
     )
 
 
+@app.post("/api/auth/send-sms-code")
+def send_sms_code():
+    config_path = get_config_path()
+    creds = get_auth_credentials(config_path)
+    if creds is None:
+        return jsonify({"ok": False, "message": "未启用登录认证。"}), 400
+
+    sms_login = get_sms_login_config(config_path)
+    if sms_login is None:
+        return jsonify({"ok": False, "message": "未启用手机号登录。"}), 400
+
+    payload = request.get_json(silent=True) or {}
+    phone = normalize_phone_number(payload.get("phone"))
+    if not phone:
+        return jsonify({"ok": False, "message": "手机号不能为空。"}), 400
+
+    allowed_phones = {str(x) for x in sms_login.get("allowed_phones", []) if str(x)}
+    if phone not in allowed_phones:
+        return jsonify({"ok": False, "message": "该手机号未被授权登录。"}), 403
+
+    limit = int(sms_login.get("daily_send_limit", SMS_DAILY_SEND_LIMIT))
+    ttl_seconds = int(sms_login.get("code_ttl_seconds", SMS_CODE_TTL_SECONDS))
+    with SMS_LOGIN_RUNTIME_LOCK:
+        state = _get_sms_runtime_state(phone)
+        send_count = int(state.get("send_count", 0))
+        failed_count = int(state.get("failed_count", 0))
+        if send_count >= limit or failed_count >= limit:
+            return jsonify({"ok": False, "message": "今日验证码发送次数已用尽，请使用账号密码登录。", "remaining": 0}), 429
+
+    code = generate_sms_code()
+    send_result = send_aliyun_sms_code(phone, code, sms_login)
+    if not send_result.get("ok"):
+        return jsonify({"ok": False, "message": send_result.get("message", "短信发送失败。")}), 502
+
+    now_ts = time.time()
+    with SMS_LOGIN_RUNTIME_LOCK:
+        state = _get_sms_runtime_state(phone)
+        send_count = int(state.get("send_count", 0))
+        failed_count = int(state.get("failed_count", 0))
+        if send_count >= limit or failed_count >= limit:
+            return jsonify({"ok": False, "message": "今日验证码发送次数已用尽，请使用账号密码登录。", "remaining": 0}), 429
+        state["send_count"] = send_count + 1
+        state["code"] = code
+        state["expires_at"] = now_ts + ttl_seconds
+        remaining = max(0, limit - int(state["send_count"]))
+
+    return jsonify(
+        {
+            "ok": True,
+            "message": f"验证码已发送到 {mask_phone(phone)}。",
+            "remaining": remaining,
+            "ttl_seconds": ttl_seconds,
+            "daily_limit": limit,
+        }
+    )
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
-    creds = get_auth_credentials(get_config_path())
+    config_path = get_config_path()
+    creds = get_auth_credentials(config_path)
     if creds is None:
         return redirect(url_for("index"))
+    sms_login = get_sms_login_config(config_path)
+    sms_login_enabled = sms_login is not None
 
     default_next = url_for("index")
     next_url = request.values.get("next", default_next)
@@ -790,19 +1121,43 @@ def login():
         return redirect(next_url)
 
     error = None
+    requested_mode = str(request.args.get("mode", "")).strip()
+    current_login_type = "sms" if sms_login_enabled and requested_mode == "sms" else "password"
     if request.method == "POST":
-        username = request.form.get("username", "")
-        password = request.form.get("password", "")
-        user_ok = hmac.compare_digest(username, creds[0])
-        pass_ok = hmac.compare_digest(password, creds[1])
-        if user_ok and pass_ok:
-            session.clear()
-            session["logged_in"] = True
-            session["username"] = creds[0]
-            return redirect(next_url)
-        error = "用户名或密码错误。"
+        login_type = str(request.form.get("login_type", "password")).strip()
+        current_login_type = "sms" if login_type == "sms" and sms_login_enabled else "password"
+        if login_type == "sms":
+            if not sms_login_enabled:
+                error = "未启用手机号登录。"
+            else:
+                phone = normalize_phone_number(request.form.get("phone", ""))
+                sms_code = str(request.form.get("sms_code", "")).strip()
+                ok, message = login_with_sms(phone, sms_code, sms_login)
+                if ok:
+                    session.clear()
+                    session["logged_in"] = True
+                    session["username"] = creds[0]
+                    session["display_user"] = phone
+                    return redirect(next_url)
+                error = message
+        else:
+            username = request.form.get("username", "")
+            password = request.form.get("password", "")
+            if login_with_password(username, password, creds):
+                session.clear()
+                session["logged_in"] = True
+                session["username"] = creds[0]
+                session["display_user"] = creds[0]
+                return redirect(next_url)
+            error = "用户名或密码错误。"
 
-    return render_template("login.html", error=error, next_url=next_url)
+    return render_template(
+        "login.html",
+        error=error,
+        next_url=next_url,
+        sms_login_enabled=sms_login_enabled,
+        login_type=current_login_type,
+    )
 
 
 @app.get("/logout")

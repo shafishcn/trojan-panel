@@ -3,6 +3,17 @@
     "username": "admin",
     "password": "change-me"
   },
+  "sms_login": {
+    "enabled": false,
+    "allowed_phones": [
+      "13800138000"
+    ],
+    "access_key_id": "LTAIxxxxxxxx",
+    "access_key_secret": "xxxxxxxx",
+    "sign_name": "速通互联验证码",
+    "template_code": "100001",
+    "template_param": "{\"code\":\"##code##\",\"min\":\"5\"}"
+  },
   "subscriptions": {},
   "servers": [
     {
@@ -12,8 +23,8 @@
       "addr": "tj9.tffats.top",
       "trojan_password": "tffats110",
       "current_port": 443,
-      "command_template": "ssh -i ~/.ssh/id_ed25519 root@203.0.113.10 trojan port $1",
-      "status_command_template": "ssh -i ~/.ssh/id_ed25519 root@203.0.113.10 trojan status"
+      "command_template": "ssh -i ~/.ssh/id_ed19 root@203.0.113.10 trojan port $1",
+      "status_command_template": "ssh -i ~/.ssh/id_ed19 root@203.0.113.10 trojan status"
     },
     {
       "id": "jp-backup",

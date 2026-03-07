@@ -7,6 +7,7 @@
 - 单台服务器端口切换（执行 `ssh xxx trojan port $1`）
 - 单台检查 Trojan 服务运行状态（执行 `trojan status`）
 - 可选登录鉴权（账号密码保存到 `servers.json`）
+- 可选手机号验证码登录（阿里云短信，手机号白名单配置在 `servers.json`）
 - Trojan 订阅地址生成（单选/多选服务器，返回 trojan 链接 base64）
 
 ## 2. 环境要求
@@ -53,6 +54,17 @@ TROJAN_PANEL_HOST=127.0.0.1 TROJAN_PANEL_PORT=8000 .venv/bin/python app.py
     "username": "admin",
     "password": "change-me"
   },
+  "sms_login": {
+    "enabled": true,
+    "allowed_phones": [
+      "13800138000"
+    ],
+    "access_key_id": "LTAIxxxxxxxx",
+    "access_key_secret": "xxxxxxxx",
+    "sign_name": "速通互联验证码",
+    "template_code": "100001",
+    "template_param": "{\"code\":\"##code##\",\"min\":\"5\"}"
+  },
   "subscriptions": {},
   "servers": []
 }
@@ -75,6 +87,17 @@ TROJAN_PANEL_HOST=127.0.0.1 TROJAN_PANEL_PORT=8000 .venv/bin/python app.py
 - `auth.password`：登录密码
 - 两个都为空或未设置：关闭登录校验
 - 两个都填写：启用登录校验（访问页面与 API 都需要先登录）
+
+顶层 `sms_login` 字段说明（可选）：
+
+- `sms_login.enabled`：是否启用手机号验证码登录
+- `sms_login.allowed_phones`：允许登录的手机号白名单，仅支持列表中的号码
+- `sms_login.access_key_id` / `sms_login.access_key_secret`：阿里云 AK/SK（也可用环境变量 `ALIBABA_CLOUD_ACCESS_KEY_ID` / `ALIBABA_CLOUD_ACCESS_KEY_SECRET`）
+- `sms_login.sign_name`：阿里云短信签名（对应 sms-demo `sign_name`）
+- `sms_login.template_code`：阿里云模板编号（对应 sms-demo `template_code`）
+- `sms_login.template_param`：模板参数字符串（对应 sms-demo `template_param`，会把 `##code##` 替换为真实验证码）
+- 验证码默认有效期 5 分钟
+- 每个手机号每天最多发送 2 次验证码；两次验证码均未通过后，当天仅可使用账号密码登录
 
 顶层 `subscriptions` 字段说明：
 
@@ -148,6 +171,8 @@ TROJAN_PANEL_HOST=127.0.0.1 TROJAN_PANEL_PORT=8000 .venv/bin/python app.py
 - 关闭方式：把登录账号和密码都清空并保存
 - 开启后，未登录访问会自动跳转 `/login`
 - 页面右上角可点击“退出登录”
+- 如果在 `servers.json` 配置了 `sms_login`，登录页会出现“手机号验证码登录”
+- 手机号由用户在登录页手动输入，且必须命中 `sms_login.allowed_phones` 白名单
 
 ### 5.6 Trojan 订阅地址（Base64）
 
