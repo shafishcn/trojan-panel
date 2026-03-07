@@ -36,8 +36,7 @@
         smsResultEl.classList.add("error");
         return;
       }
-      const remaining = typeof data.remaining === "number" ? data.remaining : null;
-      smsResultEl.textContent = remaining === null ? data.message : `${data.message} 今日剩余发送次数: ${remaining}`;
+      smsResultEl.textContent = data.message;
       smsResultEl.classList.remove("error");
       smsResultEl.classList.add("ok");
     } catch (err) {

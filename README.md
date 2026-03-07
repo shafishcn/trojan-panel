@@ -63,7 +63,7 @@ TROJAN_PANEL_HOST=127.0.0.1 TROJAN_PANEL_PORT=8000 .venv/bin/python app.py
     "access_key_secret": "xxxxxxxx",
     "sign_name": "速通互联验证码",
     "template_code": "100001",
-    "template_param": "{\"code\":\"##code##\",\"min\":\"5\"}"
+    "template_param": "{\"code\":\"##code##\",\"min\":\"##min##\"}"
   },
   "subscriptions": {},
   "servers": []
@@ -95,8 +95,8 @@ TROJAN_PANEL_HOST=127.0.0.1 TROJAN_PANEL_PORT=8000 .venv/bin/python app.py
 - `sms_login.access_key_id` / `sms_login.access_key_secret`：阿里云 AK/SK（也可用环境变量 `ALIBABA_CLOUD_ACCESS_KEY_ID` / `ALIBABA_CLOUD_ACCESS_KEY_SECRET`）
 - `sms_login.sign_name`：阿里云短信签名（对应 sms-demo `sign_name`）
 - `sms_login.template_code`：阿里云模板编号（对应 sms-demo `template_code`）
-- `sms_login.template_param`：模板参数字符串（对应 sms-demo `template_param`，会把 `##code##` 替换为真实验证码）
-- 验证码默认有效期 5 分钟
+- `sms_login.template_param`：模板参数字符串（对应 sms-demo `template_param`，会把 `##code##` 替换为真实验证码，把 `##min##` 替换为有效分钟数）
+- 验证码默认有效期 15 分钟
 - 每个手机号每天最多发送 2 次验证码；两次验证码均未通过后，当天仅可使用账号密码登录
 
 顶层 `subscriptions` 字段说明：

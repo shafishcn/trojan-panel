@@ -46,7 +46,8 @@ SSH_OPTIONS_WITH_ARG = {
     "-W",
     "-w",
 }
-SMS_CODE_TTL_SECONDS = 300
+SMS_CODE_TTL_SECONDS = 15 * 60
+SMS_CODE_TTL_MINUTES = SMS_CODE_TTL_SECONDS // 60
 SMS_DAILY_SEND_LIMIT = 2
 SMS_CODE_LENGTH = 6
 SMS_LOGIN_RUNTIME: dict[str, dict[str, Any]] = {}
@@ -305,7 +306,7 @@ def normalize_sms_login(raw_sms_login: Any) -> dict[str, Any] | None:
         "access_key_secret": "",
         "sign_name": "",
         "template_code": "",
-        "template_param": "{\"code\":\"##code##\",\"min\":\"5\"}",
+        "template_param": "{\"code\":\"##code##\",\"min\":\"##min##\"}",
         "endpoint": "dypnsapi.aliyuncs.com",
     }
     for key in ("access_key_id", "access_key_secret", "sign_name", "template_code", "template_param", "endpoint"):
@@ -372,17 +373,19 @@ def generate_sms_code() -> str:
     return f"{secrets.randbelow(10 ** SMS_CODE_LENGTH):0{SMS_CODE_LENGTH}d}"
 
 
-def render_sms_template_param(raw_template_param: str, code: str) -> str:
-    if "##code##" in raw_template_param:
-        return raw_template_param.replace("##code##", code)
+def render_sms_template_param(raw_template_param: str, code: str, ttl_seconds: int) -> str:
+    ttl_minutes = max(1, (ttl_seconds + 59) // 60)
+    rendered = raw_template_param.replace("##code##", code).replace("##min##", str(ttl_minutes))
     try:
-        data = json.loads(raw_template_param)
+        data = json.loads(rendered)
     except json.JSONDecodeError:
-        return raw_template_param
+        return rendered
     if not isinstance(data, dict):
-        return raw_template_param
+        return rendered
     if "code" not in data:
         data["code"] = code
+    if "min" in data and (not str(data.get("min", "")).strip() or str(data.get("min")) == "##min##"):
+        data["min"] = str(ttl_minutes)
     return json.dumps(data, separators=(",", ":"), ensure_ascii=False)
 
 
@@ -416,10 +419,11 @@ def send_aliyun_sms_code(phone: str, code: str, sms_login: dict[str, Any]) -> di
     aliyun = sms_login.get("aliyun", {})
     sign_name = str(aliyun.get("sign_name", "")).strip()
     template_code = str(aliyun.get("template_code", "")).strip()
-    raw_template_param = str(aliyun.get("template_param", "{\"code\":\"##code##\",\"min\":\"5\"}")).strip()
+    ttl_seconds = int(sms_login.get("code_ttl_seconds", SMS_CODE_TTL_SECONDS))
+    raw_template_param = str(aliyun.get("template_param", "{\"code\":\"##code##\",\"min\":\"##min##\"}")).strip()
     endpoint = str(aliyun.get("endpoint", "dypnsapi.aliyuncs.com")).strip() or "dypnsapi.aliyuncs.com"
     endpoint = endpoint.removeprefix("https://").removeprefix("http://").strip("/")
-    template_param = render_sms_template_param(raw_template_param, code)
+    template_param = render_sms_template_param(raw_template_param, code, ttl_seconds)
     access_key_id = str(aliyun.get("access_key_id", "")).strip() or str(os.getenv("ALIBABA_CLOUD_ACCESS_KEY_ID", "")).strip()
     access_key_secret = str(aliyun.get("access_key_secret", "")).strip() or str(
         os.getenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "")
@@ -1095,7 +1099,7 @@ def send_sms_code():
     return jsonify(
         {
             "ok": True,
-            "message": f"验证码已发送到 {mask_phone(phone)}。",
+            "message": f"验证码已发送到 {mask_phone(phone)}，{SMS_CODE_TTL_MINUTES}分钟内有效。",
             "remaining": remaining,
             "ttl_seconds": ttl_seconds,
             "daily_limit": limit,

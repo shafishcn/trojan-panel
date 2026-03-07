@@ -12,7 +12,7 @@
     "access_key_secret": "xxxxxxxx",
     "sign_name": "速通互联验证码",
     "template_code": "100001",
-    "template_param": "{\"code\":\"##code##\",\"min\":\"5\"}"
+    "template_param": "{\"code\":\"##code##\",\"min\":\"##min##\"}"
   },
   "subscriptions": {},
   "servers": [

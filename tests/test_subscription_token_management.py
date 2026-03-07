@@ -82,7 +82,7 @@ class SubscriptionTokenManagementTests(unittest.TestCase):
             "allowed_phones": selected_phones,
             "sign_name": "速通互联验证码",
             "template_code": "100001",
-            "template_param": "{\"code\":\"##code##\",\"min\":\"5\"}",
+            "template_param": "{\"code\":\"##code##\",\"min\":\"##min##\"}",
         }
 
     def test_generate_custom_token_and_list(self) -> None:
@@ -254,6 +254,16 @@ class SubscriptionTokenManagementTests(unittest.TestCase):
         self.assertTrue(first.get_json()["ok"])
         self.assertTrue(second.get_json()["ok"])
         self.assertFalse(third.get_json()["ok"])
+        self.assertEqual(first.get_json()["ttl_seconds"], 900)
+        self.assertIn("15分钟内有效", first.get_json()["message"])
+
+    def test_render_sms_template_param_replaces_min_placeholder(self) -> None:
+        rendered = app_module.render_sms_template_param(
+            "{\"code\":\"##code##\",\"min\":\"##min##\"}",
+            "123456",
+            900,
+        )
+        self.assertEqual(rendered, "{\"code\":\"123456\",\"min\":\"15\"}")
 
     def test_sms_login_success(self) -> None:
         self.write_config(
