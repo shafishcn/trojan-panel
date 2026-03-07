@@ -293,9 +293,8 @@ function createEditorItem(server, templateEl) {
 
   const removeBtn = item.querySelector(".remove-server-btn");
   if (removeBtn) {
-    removeBtn.addEventListener("click", () => {
-      item.remove();
-    });
+    removeBtn.hidden = true;
+    removeBtn.disabled = true;
   }
   return item;
 }
