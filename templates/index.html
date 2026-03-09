@@ -135,21 +135,79 @@
                   <span>订阅</span>
                 </label>
               </div>
-              <span>{{ s.ssh_target if s.ssh_target else s.command_template }}</span>
+              <p class="server-command-line">{{ s.ssh_target if s.ssh_target else s.command_template }}</p>
             </div>
+            <div class="server-divider" aria-hidden="true"></div>
 
             {% if s.description %}
               <p class="desc">{{ s.description }}</p>
             {% endif %}
-            <p class="addr-line">检测地址: <span>{{ s.addr if s.addr else "未配置" }}</span></p>
+
+            <section class="traffic-panel" aria-label="流量监控">
+              <div class="traffic-head">
+                <div class="traffic-head-copy">
+                  <p class="traffic-title">流量监控</p>
+                  <p class="traffic-period-line">当前周期: <span class="traffic-period-value">未获取</span></p>
+                </div>
+                <span class="traffic-cycle-badge">{{ s.traffic_cycle_label }}</span>
+              </div>
+              <div class="traffic-metrics">
+                <div class="traffic-metric">
+                  <span class="traffic-metric-label">下载</span>
+                  <strong class="traffic-rx-value">--</strong>
+                </div>
+                <div class="traffic-metric">
+                  <span class="traffic-metric-label">上传</span>
+                  <strong class="traffic-tx-value">--</strong>
+                </div>
+                <div class="traffic-metric">
+                  <span class="traffic-metric-label">已用</span>
+                  <strong class="traffic-total-value">--</strong>
+                </div>
+              </div>
+              <div class="traffic-quota-panel">
+                <div class="traffic-quota-stat">
+                  <span class="traffic-quota-label">总流量</span>
+                  <strong class="traffic-quota-value">未设置</strong>
+                </div>
+                <div class="traffic-quota-stat">
+                  <span class="traffic-quota-label">剩余</span>
+                  <strong class="traffic-remaining-value">--</strong>
+                </div>
+                <div class="traffic-quota-stat">
+                  <span class="traffic-quota-label">使用率</span>
+                  <strong class="traffic-percent-value">--</strong>
+                </div>
+                <div class="traffic-progress" aria-hidden="true">
+                  <span class="traffic-progress-bar"></span>
+                </div>
+              </div>
+              <div class="traffic-foot">
+                <p class="traffic-note">数据源：vnstat{% if s.vnstat_interface %} / {{ s.vnstat_interface }}{% else %} / 自动选择网卡{% endif %}</p>
+                <button class="traffic-btn ghost-btn" type="button">刷新流量</button>
+              </div>
+            </section>
+
+            <div class="server-meta-grid">
+              <p class="addr-line server-meta-item">
+                <span class="server-meta-label">检测地址</span>
+                <span class="server-meta-value">{{ s.addr if s.addr else "未配置" }}</span>
+              </p>
+              <p class="current-port server-meta-item">
+                <span class="server-meta-label">当前端口</span>
+                <span class="current-port-value server-meta-value">未知</span>
+              </p>
+              <p class="network-line server-meta-item">
+                <span class="server-meta-label">网络检测</span>
+                <span class="network-value server-meta-value">未检测</span>
+              </p>
+            </div>
 
             <div class="form-row">
               <label for="port-{{ s.id }}">端口</label>
               <input id="port-{{ s.id }}" type="number" min="1" max="65535" placeholder="例如 443">
             </div>
 
-            <p class="current-port">当前端口: <span class="current-port-value">未知</span></p>
-            <p class="network-line">网络检测: <span class="network-value">未检测</span></p>
             <div class="quick-list"></div>
 
             <div class="card-actions">

@@ -9,6 +9,15 @@ function formatOutput(res) {
   if (res.network_status) lines.push(`network: ${res.network_status}`);
   if (res.network_target) lines.push(`network target: ${res.network_target}`);
   if (res.network_message) lines.push(`network message: ${res.network_message}`);
+  if (res.traffic_cycle_label) lines.push(`traffic cycle: ${res.traffic_cycle_label}`);
+  if (res.traffic_period_label) lines.push(`traffic period: ${res.traffic_period_label}`);
+  if (res.interface) lines.push(`traffic interface: ${res.interface}`);
+  if (res.traffic_rx_display) lines.push(`traffic download: ${res.traffic_rx_display}`);
+  if (res.traffic_tx_display) lines.push(`traffic upload: ${res.traffic_tx_display}`);
+  if (res.traffic_total_display) lines.push(`traffic total: ${res.traffic_total_display}`);
+  if (res.traffic_quota_display) lines.push(`traffic quota: ${res.traffic_quota_display}`);
+  if (res.traffic_remaining_display) lines.push(`traffic remaining: ${res.traffic_remaining_display}`);
+  if (res.traffic_quota_percent !== undefined && res.traffic_quota_percent !== null) lines.push(`traffic used: ${res.traffic_quota_percent}%`);
   if (res.command) lines.push(`command: ${res.command}`);
   if (res.returncode !== undefined) lines.push(`return code: ${res.returncode}`);
   if (res.message) lines.push(`message: ${res.message}`);
@@ -288,6 +297,19 @@ function renderQuickButtons(card, quickPorts) {
   }
 }
 
+function formatTrafficSource(data) {
+  if (!data || typeof data !== "object") {
+    return "数据源：vnstat / 自动选择网卡";
+  }
+  if (data.interface) {
+    return `数据源：vnstat / ${data.interface}`;
+  }
+  if (data.vnstat_interface) {
+    return `数据源：vnstat / ${data.vnstat_interface}`;
+  }
+  return "数据源：vnstat / 自动选择网卡";
+}
+
 function applyRuntimeToCard(card, data) {
   if (!card || !data) return;
   const currentEl = card.querySelector(".current-port-value");
@@ -296,6 +318,80 @@ function applyRuntimeToCard(card, data) {
   }
   if (data.quick_ports !== undefined) {
     renderQuickButtons(card, data.quick_ports);
+  }
+}
+
+function applyTrafficToCard(card, data) {
+  if (!card || !data) return;
+  const cycleBadgeEl = card.querySelector(".traffic-cycle-badge");
+  const periodEl = card.querySelector(".traffic-period-value");
+  const rxEl = card.querySelector(".traffic-rx-value");
+  const txEl = card.querySelector(".traffic-tx-value");
+  const totalEl = card.querySelector(".traffic-total-value");
+  const quotaEl = card.querySelector(".traffic-quota-value");
+  const remainingEl = card.querySelector(".traffic-remaining-value");
+  const percentEl = card.querySelector(".traffic-percent-value");
+  const progressEl = card.querySelector(".traffic-progress");
+  const progressBarEl = card.querySelector(".traffic-progress-bar");
+  const noteEl = card.querySelector(".traffic-note");
+  const panelEl = card.querySelector(".traffic-panel");
+  if (!periodEl || !rxEl || !txEl || !totalEl || !quotaEl || !remainingEl || !percentEl || !progressEl || !progressBarEl || !noteEl || !panelEl) return;
+  const hasTrafficMeta = Boolean(
+    data.traffic_cycle_label
+    || data.traffic_period_label
+    || data.interface
+    || data.vnstat_interface,
+  );
+  const hasTrafficValues = Boolean(
+    data.traffic_rx_display
+    || data.traffic_tx_display
+    || data.traffic_total_display,
+  );
+  const hasQuotaConfig = Boolean(data.traffic_quota_display || data.traffic_quota_bytes !== undefined);
+
+  if (cycleBadgeEl && data.traffic_cycle_label) {
+    cycleBadgeEl.textContent = data.traffic_cycle_label;
+  }
+  if (data.traffic_period_label) {
+    periodEl.textContent = data.traffic_period_label;
+  }
+  if (data.traffic_rx_display) {
+    rxEl.textContent = data.traffic_rx_display;
+  }
+  if (data.traffic_tx_display) {
+    txEl.textContent = data.traffic_tx_display;
+  }
+  if (data.traffic_total_display) {
+    totalEl.textContent = data.traffic_total_display;
+  }
+  if (hasQuotaConfig) {
+    quotaEl.textContent = data.traffic_quota_display || data.traffic_quota || "未设置";
+    remainingEl.textContent = data.traffic_remaining_display || "--";
+    percentEl.textContent = data.traffic_quota_percent !== undefined && data.traffic_quota_percent !== null
+      ? `${data.traffic_quota_percent}%`
+      : "--";
+    const percent = Number(data.traffic_quota_percent);
+    const safePercent = Number.isFinite(percent) ? Math.max(0, Math.min(percent, 100)) : 0;
+    progressBarEl.style.width = `${safePercent}%`;
+    progressEl.classList.toggle("is-configured", Boolean(data.traffic_quota_configured || data.traffic_quota_display));
+    progressEl.classList.toggle("is-exceeded", Boolean(data.traffic_quota_exceeded));
+  } else {
+    progressBarEl.style.width = "0%";
+    progressEl.classList.remove("is-configured", "is-exceeded");
+  }
+  if (hasTrafficMeta) {
+    noteEl.textContent = formatTrafficSource(data);
+  }
+
+  if (!hasTrafficMeta && !hasTrafficValues) {
+    return;
+  }
+
+  panelEl.classList.remove("is-error", "is-ok");
+  if (hasTrafficValues) {
+    panelEl.classList.add(data.ok ? "is-ok" : "is-error");
+  } else if (data.ok === false) {
+    panelEl.classList.add("is-error");
   }
 }
 
@@ -328,6 +424,7 @@ function applyCardResult(serverId, data) {
   if (!card) return;
   applyRuntimeToCard(card, data);
   applyNetworkToCard(card, data);
+  applyTrafficToCard(card, data);
   const resultEl = card.querySelector(".result");
   if (!resultEl) return;
   markResult(resultEl, Boolean(data.ok), formatOutput(data));
@@ -376,6 +473,25 @@ async function checkNetwork(serverId, button, resultEl) {
   const restore = setButtonLoading(button, "检测中...");
   try {
     const resp = await fetch("/api/network-check", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ server_id: serverId }),
+    });
+    const data = await parseApiResponse(resp);
+    applyCardResult(serverId, data);
+  } catch (err) {
+    if (err instanceof UnauthorizedError) return;
+    markResult(resultEl, false, `request error: ${err}`);
+  } finally {
+    restore();
+  }
+}
+
+async function checkTraffic(serverId, button, resultEl) {
+  markResult(resultEl, null, "正在读取当前周期流量...");
+  const restore = setButtonLoading(button, "读取中...");
+  try {
+    const resp = await fetch("/api/server-traffic", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ server_id: serverId }),
@@ -460,6 +576,9 @@ function createEditorItem(server, templateEl) {
     currentPort: item.querySelector('input[data-field="current_port"]'),
     addr: item.querySelector('input[data-field="addr"]'),
     trojanPassword: item.querySelector('input[data-field="trojan_password"]'),
+    trafficQuota: item.querySelector('input[data-field="traffic_quota"]'),
+    vnstatInterface: item.querySelector('input[data-field="vnstat_interface"]'),
+    trafficCycleDay: item.querySelector('input[data-field="traffic_cycle_day"]'),
     description: item.querySelector('input[data-field="description"]'),
   };
 
@@ -504,6 +623,18 @@ function createEditorItem(server, templateEl) {
     fields.trojanPassword.value = server.trojan_password || "";
     fields.trojanPassword.readOnly = true;
   }
+  if (fields.trafficQuota) {
+    fields.trafficQuota.value = server.traffic_quota || "";
+    fields.trafficQuota.readOnly = true;
+  }
+  if (fields.vnstatInterface) {
+    fields.vnstatInterface.value = server.vnstat_interface || "";
+    fields.vnstatInterface.readOnly = true;
+  }
+  if (fields.trafficCycleDay) {
+    fields.trafficCycleDay.value = server.traffic_cycle_day || "";
+    fields.trafficCycleDay.readOnly = true;
+  }
   if (fields.description) fields.description.value = server.description || "";
 
   syncDerivedCommands();
@@ -531,6 +662,9 @@ function collectServerEditors(listEl) {
       current_port: getValue("current_port"),
       addr: getValue("addr"),
       trojan_password: getValue("trojan_password"),
+      traffic_quota: getValue("traffic_quota"),
+      vnstat_interface: getValue("vnstat_interface"),
+      traffic_cycle_day: getValue("traffic_cycle_day"),
       description: getValue("description"),
     };
   });
@@ -548,7 +682,19 @@ function initConfigEditor() {
 
   const initial = initialServers.length
     ? initialServers
-    : [{ id: "", name: "", command_template: "", status_command_template: "", current_port: "", addr: "", trojan_password: "", description: "" }];
+    : [{
+      id: "",
+      name: "",
+      command_template: "",
+      status_command_template: "",
+      current_port: "",
+      addr: "",
+      trojan_password: "",
+      traffic_quota: "",
+      vnstat_interface: "",
+      traffic_cycle_day: "",
+      description: "",
+    }];
 
   for (const server of initial) {
     const node = createEditorItem(server, templateEl);
@@ -561,7 +707,19 @@ function initConfigEditor() {
   addBtn.addEventListener("click", () => {
     const autoId = buildAutoServerId(listEl);
     const node = createEditorItem(
-      { id: autoId, name: "", command_template: "", status_command_template: "", current_port: "", addr: "", trojan_password: "", description: "" },
+      {
+        id: autoId,
+        name: "",
+        command_template: "",
+        status_command_template: "",
+        current_port: "",
+        addr: "",
+        trojan_password: "",
+        traffic_quota: "",
+        vnstat_interface: "",
+        traffic_cycle_day: "",
+        description: "",
+      },
       templateEl,
     );
     if (node) listEl.appendChild(node);
@@ -1217,11 +1375,15 @@ function initServerCards() {
     const submitBtn = card.querySelector(".submit-btn");
     const statusBtn = card.querySelector(".status-btn");
     const networkBtn = card.querySelector(".network-btn");
+    const trafficBtn = card.querySelector(".traffic-btn");
     const resultEl = card.querySelector(".result");
-    if (!serverId || !input || !submitBtn || !statusBtn || !networkBtn || !resultEl) return;
+    if (!serverId || !input || !submitBtn || !statusBtn || !networkBtn || !trafficBtn || !resultEl) return;
 
     const initial = initialServers.find((item) => item.id === serverId);
-    if (initial) applyRuntimeToCard(card, initial);
+    if (initial) {
+      applyRuntimeToCard(card, initial);
+      applyTrafficToCard(card, initial);
+    }
 
     card.addEventListener("click", (event) => {
       const target = event.target;
@@ -1249,6 +1411,10 @@ function initServerCards() {
 
     networkBtn.addEventListener("click", async () => {
       await checkNetwork(serverId, networkBtn, resultEl);
+    });
+
+    trafficBtn.addEventListener("click", async () => {
+      await checkTraffic(serverId, trafficBtn, resultEl);
     });
 
     input.addEventListener("keydown", async (event) => {

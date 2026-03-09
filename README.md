@@ -80,6 +80,9 @@ TROJAN_PANEL_HOST=127.0.0.1 TROJAN_PANEL_PORT=8000 .venv/bin/python app.py
 - `current_port`：当前使用端口，可选（建议填写）
 - `command_template`：端口切换命令模板，必填，必须包含 `$1`
 - `status_command_template`：状态检查命令，可选（不填则自动从 `command_template` 推导）
+- `vnstat_interface`：流量统计网卡，可选；不填时系统会自动选择 `vnstat` 返回中总流量最高的网卡
+- `traffic_cycle_day`：流量统计周期日，可选，范围 `1-31`；默认 `1` 表示自然月；当配置为 `29-31` 时，短月会按月末计算
+- `traffic_quota`：流量总额，可选，支持 `2048 GB`、`2.9 TB` 这类写法；面板会据此计算剩余流量与使用率
 
 顶层 `auth` 字段说明：
 
@@ -119,6 +122,9 @@ TROJAN_PANEL_HOST=127.0.0.1 TROJAN_PANEL_PORT=8000 .venv/bin/python app.py
       "description": "主节点",
       "addr": "tj9.tffats.top",
       "current_port": 443,
+      "vnstat_interface": "eth0",
+      "traffic_cycle_day": 1,
+      "traffic_quota": "2048 GB",
       "command_template": "ssh -i ~/.ssh/id_ed25519 root@203.0.113.10 trojan port $1",
       "status_command_template": "ssh -i ~/.ssh/id_ed25519 root@203.0.113.10 trojan status"
     }
@@ -135,7 +141,7 @@ TROJAN_PANEL_HOST=127.0.0.1 TROJAN_PANEL_PORT=8000 .venv/bin/python app.py
 - 编辑 `名称/描述`
 - `ID` 会自动生成，页面中为只读显示
 - `命令模板` 与 `状态命令` 会根据 `ID` 自动生成，页面中为只读显示
-- `当前端口/检测地址/Trojan 密码` 在页面中为只读显示
+- `当前端口/检测地址/Trojan 密码/流量网卡/流量周期日/流量总额` 在页面中为只读显示
 - 可在“登录配置”里设置账号和密码
 - 点击“保存配置”写入 `servers.json`
 - 保存成功后页面会自动刷新
@@ -144,7 +150,7 @@ TROJAN_PANEL_HOST=127.0.0.1 TROJAN_PANEL_PORT=8000 .venv/bin/python app.py
 
 - 自动生成的 `command_template` 形如 `ssh <id> trojan port $1`
 - 自动生成的 `status_command_template` 形如 `ssh <id> trojan status`
-- 若你需要修改 `ID/命令模板/状态命令/当前端口/检测地址/Trojan 密码`，请手工编辑 `servers.json`
+- 若你需要修改 `ID/命令模板/状态命令/当前端口/检测地址/Trojan 密码/流量网卡/流量周期日/流量总额`，请手工编辑 `servers.json`
 - `id` 不能重复
 
 ### 5.2 单台端口切换
@@ -167,7 +173,22 @@ TROJAN_PANEL_HOST=127.0.0.1 TROJAN_PANEL_PORT=8000 .venv/bin/python app.py
 - 系统会基于 `addr + current_port` 做 TCP 连通性探测
 - 可达即显示“可访问”，不可达会显示错误信息（如超时、拒绝连接、DNS 解析失败）
 
-### 5.5 登录与退出
+### 5.5 当前周期流量监控
+
+- 在操作页点击服务器卡片中的“刷新流量”
+- 系统会通过 SSH 执行 `vnstat --json d 0`
+- 面板会按 `traffic_cycle_day` 计算“当前周期”，并汇总该周期内的下载、上传、总量
+- 如果配置了 `traffic_quota`，面板还会显示总流量、剩余流量和使用率
+- 如果配置了 `vnstat_interface`，会强制读取对应网卡；未配置时会自动选择 `vnstat` 返回中总流量最高的网卡
+- 流量卡片会显示当前周期区间，例如 `2026-03-01 至 2026-03-31`
+
+前提：
+
+- 远端服务器必须已安装 `vnstat`
+- `vnstatd` 需要已经启动并持续采样
+- 刚安装 `vnstat` 时，如果历史数据太少，面板会提示当前周期数据不足
+
+### 5.6 登录与退出
 
 - 开启方式：在 `/servers` 页面“登录配置”同时填写账号和密码并保存
 - 关闭方式：把登录账号和密码都清空并保存
@@ -176,7 +197,7 @@ TROJAN_PANEL_HOST=127.0.0.1 TROJAN_PANEL_PORT=8000 .venv/bin/python app.py
 - 如果在 `servers.json` 配置了 `sms_login`，登录页会出现“手机号验证码登录”
 - 手机号由用户在登录页手动输入，且必须命中 `sms_login.allowed_phones` 白名单
 
-### 5.6 Trojan 订阅地址（Base64）
+### 5.7 Trojan 订阅地址（Base64）
 
 - 在操作页每个服务器卡片勾选“订阅”（可单选或多选）
 - 可填写“自定义订阅标识”（可选）

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import base64
+import calendar
 import datetime
 import hmac
 import json
 import os
+import re
 import secrets
 import shlex
 import socket
@@ -12,6 +14,7 @@ import subprocess
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from decimal import Decimal, InvalidOperation, ROUND_DOWN
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -51,6 +54,21 @@ SMS_CODE_TTL_MINUTES = SMS_CODE_TTL_SECONDS // 60
 LOGIN_SESSION_TTL_SECONDS = 2 * 60 * 60
 SMS_DAILY_SEND_LIMIT = 2
 SMS_CODE_LENGTH = 6
+VNSTAT_DEFAULT_CYCLE_DAY = 1
+TRAFFIC_QUOTA_FACTORS: dict[str, int] = {
+    "B": 1,
+    "KB": 1024,
+    "KIB": 1024,
+    "MB": 1024**2,
+    "MIB": 1024**2,
+    "GB": 1024**3,
+    "GIB": 1024**3,
+    "TB": 1024**4,
+    "TIB": 1024**4,
+    "PB": 1024**5,
+    "PIB": 1024**5,
+}
+TRAFFIC_QUOTA_PATTERN = re.compile(r"^\s*([0-9]+(?:\.[0-9]+)?)\s*([KMGTPE]?I?B)?\s*$", re.IGNORECASE)
 SMS_LOGIN_RUNTIME: dict[str, dict[str, Any]] = {}
 SMS_LOGIN_RUNTIME_LOCK = threading.Lock()
 
@@ -126,6 +144,74 @@ def build_quick_ports(current_port: int | None) -> list[int]:
     return []
 
 
+def normalize_vnstat_interface(raw_interface: Any) -> str:
+    if raw_interface is None:
+        return ""
+    value = str(raw_interface).strip()
+    if not value:
+        return ""
+    if any(ch.isspace() for ch in value):
+        raise ValueError("`vnstat_interface` must not contain whitespace.")
+    return value
+
+
+def parse_traffic_cycle_day(raw_cycle_day: Any) -> int:
+    if raw_cycle_day is None:
+        return VNSTAT_DEFAULT_CYCLE_DAY
+    if isinstance(raw_cycle_day, str) and not raw_cycle_day.strip():
+        return VNSTAT_DEFAULT_CYCLE_DAY
+    try:
+        cycle_day = int(raw_cycle_day)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("`traffic_cycle_day` must be an integer between 1 and 31.") from exc
+    if cycle_day < 1 or cycle_day > 31:
+        raise ValueError("`traffic_cycle_day` must be an integer between 1 and 31.")
+    return cycle_day
+
+
+def decimal_to_text(value: Decimal) -> str:
+    text = format(value.normalize(), "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text or "0"
+
+
+def normalize_traffic_quota(raw_quota: Any) -> tuple[str, int | None]:
+    if raw_quota is None:
+        return "", None
+    if isinstance(raw_quota, str) and not raw_quota.strip():
+        return "", None
+    if isinstance(raw_quota, bool):
+        raise ValueError("`traffic_quota` must be a number or string with unit such as `2048 GB`.")
+
+    if isinstance(raw_quota, (int, float)):
+        bytes_value = int(raw_quota)
+        if bytes_value < 0:
+            raise ValueError("`traffic_quota` must be >= 0.")
+        return f"{bytes_value} B", bytes_value
+
+    raw_text = str(raw_quota).strip()
+    matched = TRAFFIC_QUOTA_PATTERN.match(raw_text)
+    if not matched:
+        raise ValueError("`traffic_quota` must look like `2048 GB` or `2.9 TB`.")
+
+    number_text = matched.group(1)
+    unit = (matched.group(2) or "B").upper()
+    factor = TRAFFIC_QUOTA_FACTORS.get(unit)
+    if factor is None:
+        raise ValueError("`traffic_quota` unit is not supported.")
+
+    try:
+        amount = Decimal(number_text)
+    except InvalidOperation as exc:
+        raise ValueError("`traffic_quota` contains an invalid number.") from exc
+    if amount < 0:
+        raise ValueError("`traffic_quota` must be >= 0.")
+
+    bytes_value = int((amount * factor).to_integral_value(rounding=ROUND_DOWN))
+    return f"{decimal_to_text(amount)} {unit}", bytes_value
+
+
 def normalize_token(raw_token: Any) -> str:
     if raw_token is None:
         return ""
@@ -168,6 +254,75 @@ def utc_now() -> datetime.datetime:
 
 def format_utc_datetime(value: datetime.datetime) -> str:
     return value.astimezone(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def month_last_day(year: int, month: int) -> int:
+    return calendar.monthrange(year, month)[1]
+
+
+def clamp_month_day(year: int, month: int, day: int) -> int:
+    return min(day, month_last_day(year, month))
+
+
+def shift_year_month(year: int, month: int, delta: int) -> tuple[int, int]:
+    total_month = year * 12 + (month - 1) + delta
+    return total_month // 12, total_month % 12 + 1
+
+
+def build_cycle_anchor(year: int, month: int, cycle_day: int) -> datetime.date:
+    return datetime.date(year, month, clamp_month_day(year, month, cycle_day))
+
+
+def get_traffic_cycle_window(today: datetime.date, cycle_day: int) -> tuple[datetime.date, datetime.date]:
+    current_anchor = build_cycle_anchor(today.year, today.month, cycle_day)
+    if today >= current_anchor:
+        start = current_anchor
+        next_year, next_month = shift_year_month(today.year, today.month, 1)
+    else:
+        prev_year, prev_month = shift_year_month(today.year, today.month, -1)
+        start = build_cycle_anchor(prev_year, prev_month, cycle_day)
+        next_year, next_month = today.year, today.month
+    end_exclusive = build_cycle_anchor(next_year, next_month, cycle_day)
+    return start, end_exclusive
+
+
+def describe_traffic_cycle_day(cycle_day: int) -> str:
+    if cycle_day == 1:
+        return "自然月（每月 1 日）"
+    if cycle_day > 28:
+        return f"每月 {cycle_day} 日重置（短月按月末）"
+    return f"每月 {cycle_day} 日重置"
+
+
+def format_date_label(value: datetime.date) -> str:
+    return value.isoformat()
+
+
+def format_traffic_bytes(raw_value: int) -> str:
+    value = max(0, int(raw_value))
+    if value < 1024:
+        return f"{value} B"
+    units = ["KiB", "MiB", "GiB", "TiB", "PiB"]
+    scaled = float(value)
+    unit = units[0]
+    for unit in units:
+        scaled /= 1024.0
+        if scaled < 1024.0 or unit == units[-1]:
+            break
+    decimals = 0 if scaled >= 100 else 1 if scaled >= 10 else 2
+    return f"{scaled:.{decimals}f} {unit}"
+
+
+def format_traffic_gb(raw_value: int) -> str:
+    value = max(0, int(raw_value))
+    amount = Decimal(value) / Decimal(1024**3)
+    if amount == amount.to_integral_value():
+        quantized = amount.quantize(Decimal("1"))
+    elif amount >= Decimal("100"):
+        quantized = amount.quantize(Decimal("0.1"))
+    else:
+        quantized = amount.quantize(Decimal("0.01"))
+    return f"{decimal_to_text(quantized)} GB"
 
 
 def parse_subscription_expiry_dt(raw_expires_at: Any) -> datetime.datetime | None:
@@ -698,6 +853,9 @@ def normalize_servers(raw_servers: Any) -> list[dict[str, Any]]:
         raw_current_port = raw.get("current_port")
         raw_addr = raw.get("addr")
         raw_trojan_password = raw.get("trojan_password")
+        raw_vnstat_interface = raw.get("vnstat_interface")
+        raw_traffic_cycle_day = raw.get("traffic_cycle_day")
+        raw_traffic_quota = raw.get("traffic_quota")
 
         name = str(raw_name).strip() if raw_name is not None else server_id
         if not name:
@@ -708,12 +866,24 @@ def normalize_servers(raw_servers: Any) -> list[dict[str, Any]]:
         ssh_target = str(raw_ssh_target).strip() if raw_ssh_target is not None else ""
         addr = str(raw_addr).strip() if raw_addr is not None else ""
         trojan_password = str(raw_trojan_password) if raw_trojan_password is not None else ""
+        try:
+            vnstat_interface = normalize_vnstat_interface(raw_vnstat_interface)
+        except ValueError as exc:
+            raise ValueError(f"Server `{server_id}`: {exc}") from exc
         if any(ch.isspace() for ch in trojan_password):
             raise ValueError(f"Server `{server_id}`: `trojan_password` must not contain whitespace.")
         try:
             current_port = parse_current_port(raw_current_port)
         except ValueError:
             raise ValueError(f"Server `{server_id}`: `current_port` out of range (1-65535).")
+        try:
+            traffic_cycle_day = parse_traffic_cycle_day(raw_traffic_cycle_day)
+        except ValueError as exc:
+            raise ValueError(f"Server `{server_id}`: {exc}") from exc
+        try:
+            traffic_quota, _traffic_quota_bytes = normalize_traffic_quota(raw_traffic_quota)
+        except ValueError as exc:
+            raise ValueError(f"Server `{server_id}`: {exc}") from exc
         if command_template:
             if "$1" not in command_template:
                 raise ValueError(f"Server `{server_id}`: `command_template` must contain `$1`.")
@@ -743,6 +913,12 @@ def normalize_servers(raw_servers: Any) -> list[dict[str, Any]]:
             item["addr"] = addr
         if trojan_password:
             item["trojan_password"] = trojan_password
+        if vnstat_interface:
+            item["vnstat_interface"] = vnstat_interface
+        if raw_traffic_cycle_day not in (None, ""):
+            item["traffic_cycle_day"] = traffic_cycle_day
+        if traffic_quota:
+            item["traffic_quota"] = traffic_quota
 
         normalized.append(item)
     return normalized
@@ -758,6 +934,9 @@ def clean_server_view(item: dict[str, Any]) -> dict[str, Any]:
     raw_current_port = item.get("current_port")
     raw_addr = item.get("addr")
     raw_trojan_password = item.get("trojan_password")
+    raw_vnstat_interface = item.get("vnstat_interface")
+    raw_traffic_cycle_day = item.get("traffic_cycle_day")
+    raw_traffic_quota = item.get("traffic_quota")
 
     server_id = str(raw_id).strip() if raw_id is not None else ""
     name = str(raw_name).strip() if raw_name is not None else ""
@@ -767,6 +946,19 @@ def clean_server_view(item: dict[str, Any]) -> dict[str, Any]:
     description = str(raw_desc).strip() if raw_desc is not None else ""
     addr = str(raw_addr).strip() if raw_addr is not None else ""
     trojan_password = str(raw_trojan_password) if raw_trojan_password is not None else ""
+    try:
+        vnstat_interface = normalize_vnstat_interface(raw_vnstat_interface)
+    except ValueError:
+        vnstat_interface = ""
+    try:
+        traffic_cycle_day = parse_traffic_cycle_day(raw_traffic_cycle_day) if raw_traffic_cycle_day not in (None, "") else None
+    except ValueError:
+        traffic_cycle_day = None
+    try:
+        traffic_quota, traffic_quota_bytes = normalize_traffic_quota(raw_traffic_quota)
+    except ValueError:
+        traffic_quota, traffic_quota_bytes = "", None
+    effective_cycle_day = traffic_cycle_day or VNSTAT_DEFAULT_CYCLE_DAY
     try:
         current_port = parse_current_port(raw_current_port) if raw_current_port is not None else None
     except ValueError:
@@ -782,6 +974,13 @@ def clean_server_view(item: dict[str, Any]) -> dict[str, Any]:
         "quick_ports": build_quick_ports(current_port),
         "addr": addr,
         "trojan_password": trojan_password,
+        "vnstat_interface": vnstat_interface,
+        "traffic_cycle_day": traffic_cycle_day,
+        "traffic_cycle_label": describe_traffic_cycle_day(effective_cycle_day),
+        "traffic_quota": traffic_quota,
+        "traffic_quota_display": format_traffic_gb(traffic_quota_bytes) if traffic_quota_bytes is not None else "",
+        "traffic_quota_bytes": traffic_quota_bytes,
+        "traffic_quota_configured": traffic_quota_bytes is not None,
     }
 
 
@@ -917,6 +1116,299 @@ def build_status_command(server: dict[str, Any]) -> list[str]:
         raise ValueError("`ssh_options` must be an array.")
 
     return ["ssh", *ssh_options, target, "trojan status"]
+
+
+def build_ssh_prefix_from_template(template: str) -> list[str]:
+    parts = shlex.split(template)
+    if not parts or parts[0] != "ssh":
+        raise ValueError("`vnstat` monitoring requires an ssh-based command template.")
+    target_idx = find_ssh_target_index(parts)
+    return parts[: target_idx + 1]
+
+
+def build_remote_ssh_command(server: dict[str, Any], remote_command: str) -> list[str]:
+    target = str(server.get("ssh_target", "")).strip()
+    if target:
+        ssh_options = server.get("ssh_options", [])
+        if ssh_options is None:
+            ssh_options = []
+        if not isinstance(ssh_options, list):
+            raise ValueError("`ssh_options` must be an array.")
+        return ["ssh", *ssh_options, target, remote_command]
+
+    for key in ("status_command_template", "command_template"):
+        template = server.get(key)
+        if isinstance(template, str) and template.strip():
+            prefix = build_ssh_prefix_from_template(template)
+            return [*prefix, remote_command]
+
+    raise ValueError("`vnstat` monitoring requires `ssh_target` or an ssh-based command template.")
+
+
+def parse_vnstat_counter(raw_value: Any) -> int | None:
+    if isinstance(raw_value, bool):
+        return None
+    if isinstance(raw_value, (int, float)):
+        return max(0, int(raw_value))
+    if isinstance(raw_value, str):
+        try:
+            return max(0, int(float(raw_value)))
+        except ValueError:
+            return None
+    if isinstance(raw_value, dict):
+        for key in ("bytes", "value", "amount"):
+            nested = parse_vnstat_counter(raw_value.get(key))
+            if nested is not None:
+                return nested
+    return None
+
+
+def collect_vnstat_interfaces(payload: Any) -> list[dict[str, Any]]:
+    if not isinstance(payload, dict):
+        return []
+    interfaces = payload.get("interfaces")
+    if isinstance(interfaces, list):
+        return [item for item in interfaces if isinstance(item, dict)]
+    if isinstance(payload.get("traffic"), dict):
+        return [payload]
+    return []
+
+
+def get_vnstat_day_bucket(interface_payload: dict[str, Any]) -> list[dict[str, Any]]:
+    traffic = interface_payload.get("traffic")
+    if not isinstance(traffic, dict):
+        return []
+    for key in ("day", "days", "daily"):
+        bucket = traffic.get(key)
+        if isinstance(bucket, list):
+            return [item for item in bucket if isinstance(item, dict)]
+    return []
+
+
+def get_vnstat_interface_score(interface_payload: dict[str, Any]) -> int:
+    traffic = interface_payload.get("traffic")
+    if isinstance(traffic, dict):
+        total = traffic.get("total")
+        if isinstance(total, dict):
+            rx = parse_vnstat_counter(total.get("rx"))
+            tx = parse_vnstat_counter(total.get("tx"))
+            if rx is not None and tx is not None:
+                return rx + tx
+    score = 0
+    for entry in get_vnstat_day_bucket(interface_payload):
+        rx = parse_vnstat_counter(entry.get("rx"))
+        tx = parse_vnstat_counter(entry.get("tx"))
+        if rx is None or tx is None:
+            continue
+        score += rx + tx
+    return score
+
+
+def get_vnstat_interface_name(interface_payload: dict[str, Any]) -> str:
+    for key in ("name", "alias", "id", "nick"):
+        value = str(interface_payload.get(key, "")).strip()
+        if value:
+            return value
+    return ""
+
+
+def select_vnstat_interface(payload: Any, requested_interface: str) -> tuple[dict[str, Any], str]:
+    interfaces = collect_vnstat_interfaces(payload)
+    if not interfaces:
+        raise ValueError("`vnstat` output does not contain interface data.")
+
+    if requested_interface:
+        for interface in interfaces:
+            candidates = {
+                str(interface.get("name", "")).strip(),
+                str(interface.get("alias", "")).strip(),
+                str(interface.get("id", "")).strip(),
+                str(interface.get("nick", "")).strip(),
+            }
+            if requested_interface in candidates:
+                return interface, get_vnstat_interface_name(interface) or requested_interface
+        raise ValueError(f"`vnstat` interface not found: {requested_interface}")
+
+    if len(interfaces) == 1:
+        selected = interfaces[0]
+        return selected, get_vnstat_interface_name(selected)
+
+    selected = max(interfaces, key=get_vnstat_interface_score)
+    return selected, get_vnstat_interface_name(selected)
+
+
+def parse_vnstat_date(raw_value: Any) -> datetime.date | None:
+    if not isinstance(raw_value, dict):
+        return None
+    try:
+        year = int(raw_value.get("year"))
+        month = int(raw_value.get("month"))
+        day = int(raw_value.get("day"))
+        return datetime.date(year, month, day)
+    except (TypeError, ValueError):
+        return None
+
+
+def get_vnstat_counter_multiplier(payload: Any) -> int:
+    if not isinstance(payload, dict):
+        return 1
+    json_version = str(payload.get("jsonversion", "")).strip()
+    if json_version == "1":
+        return 1024
+    vnstat_version = str(payload.get("vnstatversion", "")).strip()
+    if vnstat_version.startswith("1."):
+        return 1024
+    return 1
+
+
+def parse_vnstat_daily_usage(payload: Any, requested_interface: str) -> tuple[list[dict[str, Any]], str]:
+    interface_payload, interface_name = select_vnstat_interface(payload, requested_interface)
+    counter_multiplier = get_vnstat_counter_multiplier(payload)
+    entries: list[dict[str, Any]] = []
+    for raw_entry in get_vnstat_day_bucket(interface_payload):
+        day = parse_vnstat_date(raw_entry.get("date"))
+        rx = parse_vnstat_counter(raw_entry.get("rx"))
+        tx = parse_vnstat_counter(raw_entry.get("tx"))
+        if day is None or rx is None or tx is None:
+            continue
+        entries.append({"date": day, "rx": rx * counter_multiplier, "tx": tx * counter_multiplier})
+    entries.sort(key=lambda item: item["date"])
+    return entries, interface_name
+
+
+def build_vnstat_command(server: dict[str, Any], include_limit: bool = True) -> list[str]:
+    vnstat_interface = normalize_vnstat_interface(server.get("vnstat_interface"))
+    remote_parts = ["vnstat"]
+    if vnstat_interface:
+        remote_parts.extend(["-i", vnstat_interface])
+    remote_parts.extend(["--json", "d"])
+    if include_limit:
+        remote_parts.append("0")
+    remote_command = shlex.join(remote_parts)
+    return build_remote_ssh_command(server, remote_command)
+
+
+def should_retry_vnstat_without_limit(result: dict[str, Any]) -> bool:
+    text = "\n".join(
+        [
+            str(result.get("stdout", "")).strip(),
+            str(result.get("stderr", "")).strip(),
+        ]
+    ).lower()
+    return 'unknown parameter "0"' in text or "unknown parameter '0'" in text
+
+
+def run_server_traffic_check(server: dict[str, Any], today: datetime.date | None = None) -> dict[str, Any]:
+    try:
+        cycle_day = parse_traffic_cycle_day(server.get("traffic_cycle_day"))
+        requested_interface = normalize_vnstat_interface(server.get("vnstat_interface"))
+        _traffic_quota_display, traffic_quota_bytes = normalize_traffic_quota(server.get("traffic_quota"))
+    except ValueError as exc:
+        return {
+            "ok": False,
+            "message": str(exc),
+            "command": "",
+            "returncode": None,
+            "stdout": "",
+            "stderr": "",
+        }
+
+    current_day = today or datetime.date.today()
+    cycle_start, cycle_end_exclusive = get_traffic_cycle_window(current_day, cycle_day)
+    cycle_end_display = cycle_end_exclusive - datetime.timedelta(days=1)
+
+    try:
+        cmd = build_vnstat_command(server, include_limit=True)
+    except ValueError as exc:
+        return {
+            "ok": False,
+            "message": str(exc),
+            "command": "",
+            "returncode": None,
+            "stdout": "",
+            "stderr": "",
+            "traffic_cycle_day": cycle_day,
+            "traffic_cycle_label": describe_traffic_cycle_day(cycle_day),
+            "traffic_period_start": format_date_label(cycle_start),
+            "traffic_period_end": format_date_label(cycle_end_display),
+            "traffic_period_label": f"{format_date_label(cycle_start)} 至 {format_date_label(cycle_end_display)}",
+            "traffic_quota_display": format_traffic_gb(traffic_quota_bytes) if traffic_quota_bytes is not None else "",
+            "traffic_quota_bytes": traffic_quota_bytes,
+            "traffic_quota_configured": traffic_quota_bytes is not None,
+        }
+
+    result = run_shell_command(cmd, "Traffic usage fetched.", "Failed to fetch traffic usage.")
+    if not result["ok"] and should_retry_vnstat_without_limit(result):
+        legacy_cmd = build_vnstat_command(server, include_limit=False)
+        result = run_shell_command(legacy_cmd, "Traffic usage fetched.", "Failed to fetch traffic usage.")
+    result["traffic_cycle_day"] = cycle_day
+    result["traffic_cycle_label"] = describe_traffic_cycle_day(cycle_day)
+    result["traffic_period_start"] = format_date_label(cycle_start)
+    result["traffic_period_end"] = format_date_label(cycle_end_display)
+    result["traffic_period_label"] = f"{format_date_label(cycle_start)} 至 {format_date_label(cycle_end_display)}"
+    result["traffic_quota_display"] = format_traffic_gb(traffic_quota_bytes) if traffic_quota_bytes is not None else ""
+    result["traffic_quota_bytes"] = traffic_quota_bytes
+    result["traffic_quota_configured"] = traffic_quota_bytes is not None
+
+    if not result["ok"]:
+        return result
+
+    try:
+        payload = json.loads(result.get("stdout", "") or "{}")
+    except json.JSONDecodeError as exc:
+        result["ok"] = False
+        result["message"] = f"`vnstat` returned invalid JSON: {exc}"
+        return result
+
+    try:
+        entries, interface_name = parse_vnstat_daily_usage(payload, requested_interface)
+    except ValueError as exc:
+        result["ok"] = False
+        result["message"] = str(exc)
+        return result
+
+    if not entries:
+        result["ok"] = False
+        result["message"] = "`vnstat` has no daily traffic data yet."
+        return result
+
+    traffic_rx = 0
+    traffic_tx = 0
+    for entry in entries:
+        day = entry["date"]
+        if cycle_start <= day < cycle_end_exclusive:
+            traffic_rx += entry["rx"]
+            traffic_tx += entry["tx"]
+
+    earliest_date = entries[0]["date"]
+    latest_date = entries[-1]["date"]
+    coverage_ok = earliest_date <= cycle_start and latest_date >= min(cycle_end_display, current_day)
+
+    result["interface"] = interface_name
+    result["traffic_rx_bytes"] = traffic_rx
+    result["traffic_tx_bytes"] = traffic_tx
+    result["traffic_total_bytes"] = traffic_rx + traffic_tx
+    result["traffic_rx_display"] = format_traffic_bytes(traffic_rx)
+    result["traffic_tx_display"] = format_traffic_bytes(traffic_tx)
+    result["traffic_total_display"] = format_traffic_bytes(traffic_rx + traffic_tx)
+    result["traffic_data_coverage_ok"] = coverage_ok
+    if traffic_quota_bytes is not None:
+        remaining = max(traffic_quota_bytes - (traffic_rx + traffic_tx), 0)
+        quota_ratio = 0.0 if traffic_quota_bytes <= 0 else min((traffic_rx + traffic_tx) / traffic_quota_bytes, 1.0)
+        result["traffic_remaining_bytes"] = remaining
+        result["traffic_remaining_display"] = format_traffic_gb(remaining)
+        result["traffic_quota_percent"] = round(quota_ratio * 100, 1)
+        result["traffic_quota_exceeded"] = (traffic_rx + traffic_tx) > traffic_quota_bytes
+    else:
+        result["traffic_remaining_bytes"] = None
+        result["traffic_remaining_display"] = ""
+        result["traffic_quota_percent"] = None
+        result["traffic_quota_exceeded"] = False
+    if coverage_ok:
+        result["message"] = "Traffic usage fetched."
+    else:
+        result["message"] = "Traffic usage fetched, but vnstat daily history may be incomplete for the current cycle."
+    return result
 
 
 def parse_service_status(stdout: str, stderr: str) -> dict[str, Any]:
@@ -1359,6 +1851,31 @@ def network_check():
     data["message"] = "Network is reachable." if data.get("network_ok") else data.get("network_message", "Network check failed.")
     data["ok"] = bool(data.get("network_ok"))
     return jsonify(data), 200
+
+
+@app.post("/api/server-traffic")
+def server_traffic():
+    payload = request.get_json(silent=True) or {}
+    server_id = payload.get("server_id")
+    if not server_id:
+        return jsonify({"ok": False, "message": "Missing `server_id`."}), 400
+
+    try:
+        servers = load_servers(get_config_path())
+        server = find_server(servers, server_id)
+    except ValueError as exc:
+        return jsonify({"ok": False, "message": str(exc)}), 400
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"ok": False, "message": f"Config error: {exc}"}), 500
+
+    result = run_server_traffic_check(server)
+    result["server_id"] = server.get("id", "")
+    status_code = 200 if result.get("ok") else 500
+    if result.get("command") == "":
+        status_code = 400
+    elif result.get("message") == "SSH command timed out.":
+        status_code = 504
+    return jsonify(result), status_code
 
 
 @app.post("/api/subscription-link")

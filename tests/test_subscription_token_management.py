@@ -40,28 +40,30 @@ class SubscriptionTokenManagementTests(unittest.TestCase):
         subscriptions: dict[str, object],
         auth: dict[str, str] | None = None,
         sms_login: dict | None = None,
+        servers: list[dict] | None = None,
     ) -> None:
+        server_list = servers if servers is not None else [
+            {
+                "id": "hk-main",
+                "name": "Hong Kong Main",
+                "command_template": "ssh hk trojan port $1",
+                "status_command_template": "ssh hk trojan status",
+                "addr": "hk.example.com",
+                "trojan_password": "pwd-hk",
+                "current_port": 443,
+            },
+            {
+                "id": "sg-main",
+                "name": "Singapore Main",
+                "command_template": "ssh sg trojan port $1",
+                "status_command_template": "ssh sg trojan status",
+                "addr": "sg.example.com",
+                "trojan_password": "pwd-sg",
+                "current_port": 8443,
+            },
+        ]
         payload = {
-            "servers": [
-                {
-                    "id": "hk-main",
-                    "name": "Hong Kong Main",
-                    "command_template": "ssh hk trojan port $1",
-                    "status_command_template": "ssh hk trojan status",
-                    "addr": "hk.example.com",
-                    "trojan_password": "pwd-hk",
-                    "current_port": 443,
-                },
-                {
-                    "id": "sg-main",
-                    "name": "Singapore Main",
-                    "command_template": "ssh sg trojan port $1",
-                    "status_command_template": "ssh sg trojan status",
-                    "addr": "sg.example.com",
-                    "trojan_password": "pwd-sg",
-                    "current_port": 8443,
-                },
-            ],
+            "servers": server_list,
             "subscriptions": subscriptions,
         }
         if auth is not None:
@@ -405,6 +407,251 @@ class SubscriptionTokenManagementTests(unittest.TestCase):
         )
         self.assertEqual(rendered, "{\"code\":\"123456\",\"min\":\"15\"}")
 
+    def test_normalize_traffic_quota_supports_tb_and_gb(self) -> None:
+        display_tb, bytes_tb = app_module.normalize_traffic_quota("2.9 TB")
+        display_gb, bytes_gb = app_module.normalize_traffic_quota("6144 GB")
+
+        self.assertEqual(display_tb, "2.9 TB")
+        self.assertEqual(display_gb, "6144 GB")
+        self.assertEqual(bytes_tb, int(app_module.Decimal("2.9") * (1024**4)))
+        self.assertEqual(bytes_gb, 6144 * (1024**3))
+        self.assertEqual(app_module.format_traffic_gb(bytes_tb), "2969.6 GB")
+        self.assertEqual(app_module.format_traffic_gb(bytes_gb), "6144 GB")
+
+    def test_run_server_traffic_check_sums_current_custom_cycle(self) -> None:
+        server = {
+            "id": "hk-main",
+            "name": "Hong Kong Main",
+            "command_template": "ssh hk trojan port $1",
+            "status_command_template": "ssh hk trojan status",
+            "vnstat_interface": "eth0",
+            "traffic_cycle_day": 15,
+            "traffic_quota": "2048 GB",
+        }
+        vnstat_payload = {
+            "jsonversion": "2",
+            "interfaces": [
+                {
+                    "name": "eth0",
+                    "traffic": {
+                        "total": {"rx": 999, "tx": 999},
+                        "day": [
+                            {"date": {"year": 2026, "month": 2, "day": 10}, "rx": 90, "tx": 10},
+                            {"date": {"year": 2026, "month": 2, "day": 15}, "rx": 120, "tx": 30},
+                            {"date": {"year": 2026, "month": 2, "day": 20}, "rx": 200, "tx": 50},
+                            {"date": {"year": 2026, "month": 3, "day": 9}, "rx": 400, "tx": 80},
+                        ],
+                    },
+                }
+            ],
+        }
+        with patch.object(
+            app_module,
+            "run_shell_command",
+            return_value={
+                "ok": True,
+                "message": "Traffic usage fetched.",
+                "command": "ssh hk vnstat -i eth0 --json d 0",
+                "returncode": 0,
+                "stdout": json.dumps(vnstat_payload),
+                "stderr": "",
+            },
+        ) as mock_run:
+            result = app_module.run_server_traffic_check(server, today=datetime.date(2026, 3, 9))
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["interface"], "eth0")
+        self.assertEqual(result["traffic_cycle_day"], 15)
+        self.assertEqual(result["traffic_cycle_label"], "每月 15 日重置")
+        self.assertEqual(result["traffic_period_start"], "2026-02-15")
+        self.assertEqual(result["traffic_period_end"], "2026-03-14")
+        self.assertEqual(result["traffic_rx_bytes"], 720)
+        self.assertEqual(result["traffic_tx_bytes"], 160)
+        self.assertEqual(result["traffic_total_bytes"], 880)
+        self.assertEqual(result["traffic_total_display"], "880 B")
+        self.assertEqual(result["traffic_quota_display"], "2048 GB")
+        self.assertEqual(result["traffic_remaining_display"], "2048 GB")
+        self.assertEqual(result["traffic_quota_percent"], 0.0)
+        self.assertIn("vnstat -i eth0 --json d 0", result["command"])
+        mock_run.assert_called_once()
+
+    def test_run_server_traffic_check_auto_selects_primary_interface(self) -> None:
+        server = {
+            "id": "hk-main",
+            "name": "Hong Kong Main",
+            "command_template": "ssh hk trojan port $1",
+        }
+        vnstat_payload = {
+            "jsonversion": "2",
+            "interfaces": [
+                {
+                    "name": "docker0",
+                    "traffic": {
+                        "total": {"rx": 10, "tx": 10},
+                        "day": [{"date": {"year": 2026, "month": 3, "day": 9}, "rx": 10, "tx": 10}],
+                    },
+                },
+                {
+                    "name": "eth0",
+                    "traffic": {
+                        "total": {"rx": 1000, "tx": 500},
+                        "day": [{"date": {"year": 2026, "month": 3, "day": 9}, "rx": 80, "tx": 20}],
+                    },
+                },
+            ],
+        }
+        with patch.object(
+            app_module,
+            "run_shell_command",
+            return_value={
+                "ok": True,
+                "message": "Traffic usage fetched.",
+                "command": "ssh hk vnstat --json d 0",
+                "returncode": 0,
+                "stdout": json.dumps(vnstat_payload),
+                "stderr": "",
+            },
+        ):
+            result = app_module.run_server_traffic_check(server, today=datetime.date(2026, 3, 9))
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["interface"], "eth0")
+        self.assertEqual(result["traffic_total_bytes"], 100)
+
+    def test_run_server_traffic_check_retries_legacy_vnstat_without_limit(self) -> None:
+        server = {
+            "id": "hk-main",
+            "name": "Hong Kong Main",
+            "command_template": "ssh hk trojan port $1",
+            "status_command_template": "ssh hk trojan status",
+            "vnstat_interface": "eth0",
+        }
+        legacy_payload = {
+            "jsonversion": "1",
+            "vnstatversion": "1.18",
+            "interfaces": [
+                {
+                    "id": "eth0",
+                    "traffic": {
+                        "day": [
+                            {"date": {"year": 2026, "month": 3, "day": 8}, "rx": 128, "tx": 64},
+                            {"date": {"year": 2026, "month": 3, "day": 9}, "rx": 256, "tx": 128},
+                        ]
+                    },
+                }
+            ],
+        }
+        with patch.object(
+            app_module,
+            "run_shell_command",
+            side_effect=[
+                {
+                    "ok": False,
+                    "message": "Failed to fetch traffic usage.",
+                    "command": "ssh hk vnstat -i eth0 --json d 0",
+                    "returncode": 1,
+                    "stdout": 'Unknown parameter "0". Use --help for help.',
+                    "stderr": "",
+                },
+                {
+                    "ok": True,
+                    "message": "Traffic usage fetched.",
+                    "command": "ssh hk vnstat -i eth0 --json d",
+                    "returncode": 0,
+                    "stdout": json.dumps(legacy_payload),
+                    "stderr": "",
+                },
+            ],
+        ) as mock_run:
+            result = app_module.run_server_traffic_check(server, today=datetime.date(2026, 3, 9))
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["interface"], "eth0")
+        self.assertEqual(result["traffic_rx_bytes"], (128 + 256) * 1024)
+        self.assertEqual(result["traffic_tx_bytes"], (64 + 128) * 1024)
+        self.assertEqual(result["traffic_total_bytes"], (128 + 64 + 256 + 128) * 1024)
+        self.assertIn("vnstat -i eth0 --json d", result["command"])
+        self.assertNotIn("vnstat -i eth0 --json d 0", result["command"])
+        self.assertEqual(mock_run.call_count, 2)
+        first_call = mock_run.call_args_list[0].args[0]
+        second_call = mock_run.call_args_list[1].args[0]
+        self.assertEqual(first_call[-1], "vnstat -i eth0 --json d 0")
+        self.assertEqual(second_call[-1], "vnstat -i eth0 --json d")
+
+    def test_save_servers_preserves_vnstat_fields(self) -> None:
+        self.write_config(
+            subscriptions={},
+            servers=[
+                {
+                    "id": "hk-main",
+                    "name": "Hong Kong Main",
+                    "command_template": "ssh hk trojan port $1",
+                    "status_command_template": "ssh hk trojan status",
+                    "addr": "hk.example.com",
+                    "trojan_password": "pwd-hk",
+                    "current_port": 443,
+                    "vnstat_interface": "eth0",
+                    "traffic_cycle_day": 15,
+                    "traffic_quota": "2048 GB",
+                }
+            ],
+        )
+        get_resp = self.client.get("/api/servers")
+        self.assertEqual(get_resp.status_code, 200)
+        body = get_resp.get_json()
+        self.assertTrue(body["ok"])
+
+        put_resp = self.client.put(
+            "/api/servers",
+            json={
+                "servers": body["servers"],
+                "auth": {"username": "", "password": ""},
+            },
+        )
+        self.assertEqual(put_resp.status_code, 200)
+        cfg = self.read_config()
+        self.assertEqual(cfg["servers"][0]["vnstat_interface"], "eth0")
+        self.assertEqual(cfg["servers"][0]["traffic_cycle_day"], 15)
+        self.assertEqual(cfg["servers"][0]["traffic_quota"], "2048 GB")
+
+    def test_server_traffic_api_returns_usage_payload(self) -> None:
+        with patch.object(
+            app_module,
+            "run_server_traffic_check",
+            return_value={
+                "ok": True,
+                "message": "Traffic usage fetched.",
+                "command": "ssh hk vnstat --json d 0",
+                "returncode": 0,
+                "stdout": "{}",
+                "stderr": "",
+                "traffic_cycle_day": 1,
+                "traffic_cycle_label": "自然月（每月 1 日）",
+                "traffic_period_start": "2026-03-01",
+                "traffic_period_end": "2026-03-31",
+                "traffic_period_label": "2026-03-01 至 2026-03-31",
+                "interface": "eth0",
+                "traffic_rx_bytes": 100,
+                "traffic_tx_bytes": 80,
+                "traffic_total_bytes": 180,
+                "traffic_rx_display": "100 B",
+                "traffic_tx_display": "80 B",
+                "traffic_total_display": "180 B",
+                "traffic_quota_display": "2048 GB",
+                "traffic_remaining_display": "2048 GB",
+                "traffic_quota_percent": 0.0,
+            },
+        ) as mock_check:
+            resp = self.client.post("/api/server-traffic", json={"server_id": "hk-main"})
+
+        self.assertEqual(resp.status_code, 200)
+        body = resp.get_json()
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["server_id"], "hk-main")
+        self.assertEqual(body["traffic_total_display"], "180 B")
+        self.assertEqual(body["traffic_quota_display"], "2048 GB")
+        mock_check.assert_called_once()
+
     def test_sms_login_success(self) -> None:
         self.write_config(
             subscriptions={"teamA": ["hk-main"]},
@@ -495,6 +742,8 @@ class SubscriptionTokenManagementTests(unittest.TestCase):
         self.assertIn("订阅有效期", html)
         self.assertIn('id="sub-expiry-custom"', html)
         self.assertIn('id="sub-expiry-minute"', html)
+        self.assertIn("流量监控", html)
+        self.assertIn("刷新流量", html)
 
     def test_subscriptions_page_redirects_to_login_when_auth_enabled(self) -> None:
         self.write_config(

@@ -23,6 +23,9 @@
       "addr": "tj9.tffats.top",
       "trojan_password": "tffats110",
       "current_port": 443,
+      "vnstat_interface": "eth0",
+      "traffic_cycle_day": 1,
+      "traffic_quota": "2048 GB",
       "command_template": "ssh -i ~/.ssh/id_ed19 root@203.0.113.10 trojan port $1",
       "status_command_template": "ssh -i ~/.ssh/id_ed19 root@203.0.113.10 trojan status"
     },
@@ -33,6 +36,8 @@
       "addr": "tj10.tffats.top",
       "trojan_password": "tffats110",
       "current_port": 443,
+      "traffic_cycle_day": 15,
+      "traffic_quota": "4096 GB",
       "command_template": "ssh ubuntu@198.51.100.8 trojan port $1"
     }
   ]

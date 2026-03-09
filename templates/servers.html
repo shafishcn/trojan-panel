@@ -98,6 +98,18 @@
           <input data-field="trojan_password" type="text" placeholder="请在配置文件中维护" readonly>
         </label>
         <label>
+          <span>流量网卡（只读）</span>
+          <input data-field="vnstat_interface" type="text" placeholder="默认自动选择" readonly>
+        </label>
+        <label>
+          <span>流量周期日（只读）</span>
+          <input data-field="traffic_cycle_day" type="number" min="1" max="31" placeholder="默认每月 1 日" readonly>
+        </label>
+        <label>
+          <span>流量总额（只读）</span>
+          <input data-field="traffic_quota" type="text" placeholder="例如 2048 GB" readonly>
+        </label>
+        <label>
           <span>描述</span>
           <input data-field="description" type="text" placeholder="可选">
         </label>

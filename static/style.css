@@ -237,6 +237,7 @@ button,
 .submit-btn,
 .status-btn,
 .network-btn,
+.traffic-btn,
 .ghost-btn,
 .danger-btn,
 .quick-btn {
@@ -271,6 +272,7 @@ button,
 .submit-btn:disabled,
 .status-btn:disabled,
 .network-btn:disabled,
+.traffic-btn:disabled,
 .config-actions .ghost-btn:disabled,
 .ghost-btn:disabled,
 .danger-btn:disabled {
@@ -284,6 +286,7 @@ button,
 .config-actions .ghost-btn,
 .status-btn,
 .network-btn,
+.traffic-btn,
 .sub-manage-head .ghost-btn,
 .sub-token-actions .ghost-btn {
   border: 1px solid #b8c8d8;
@@ -301,6 +304,7 @@ button,
 .config-actions .ghost-btn:hover,
 .status-btn:hover,
 .network-btn:hover,
+.traffic-btn:hover,
 .sub-manage-head .ghost-btn:hover,
 .sub-token-actions .ghost-btn:hover {
   transform: translateY(-1px);
@@ -467,16 +471,16 @@ body.has-modal-open {
 }
 
 .server-head {
-  padding-bottom: 10px;
-  border-bottom: 1px dashed var(--line);
+  display: grid;
+  gap: 8px;
 }
 
 .server-title-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
-  margin-bottom: 6px;
+  flex-wrap: wrap;
 }
 
 .server-card h2 {
@@ -484,14 +488,20 @@ body.has-modal-open {
   font-size: 1.08rem;
 }
 
-.server-head > span {
-  display: block;
+.server-command-line {
   margin: 0;
   color: #5d6b84;
   font-size: 0.79rem;
   line-height: 1.45;
   word-break: break-all;
   font-family: "IBM Plex Mono", "SF Mono", "Consolas", monospace;
+}
+
+.server-divider {
+  height: 1px;
+  border-radius: 999px;
+  background:
+    linear-gradient(90deg, rgba(184, 171, 147, 0), rgba(184, 171, 147, 0.9) 16%, rgba(184, 171, 147, 0.9) 84%, rgba(184, 171, 147, 0));
 }
 
 .sub-select-wrap {
@@ -539,6 +549,228 @@ body.has-modal-open {
 
 .network-value.muted {
   color: #8c7d62;
+}
+
+.server-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  padding: 2px 0;
+  border-top: 1px solid rgba(184, 171, 147, 0.52);
+  border-bottom: 1px solid rgba(184, 171, 147, 0.52);
+}
+
+.server-meta-item {
+  display: grid;
+  gap: 5px;
+  min-height: auto;
+  padding: 10px 14px 10px 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+
+.server-meta-item + .server-meta-item {
+  padding-left: 14px;
+  padding-right: 14px;
+  border-left: 1px dashed rgba(184, 171, 147, 0.76);
+}
+
+.server-meta-item:last-child {
+  padding-right: 0;
+}
+
+.server-meta-label {
+  color: #7a6b57;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+
+.server-meta-value {
+  color: var(--ink);
+  font-size: 0.9rem;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.traffic-panel {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(14, 143, 138, 0.18);
+  background:
+    linear-gradient(135deg, rgba(14, 143, 138, 0.12), rgba(14, 143, 138, 0) 38%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 244, 234, 0.92));
+  transition: border-color 140ms ease, box-shadow 140ms ease, background 140ms ease;
+}
+
+.traffic-panel.is-ok {
+  border-color: rgba(21, 124, 80, 0.28);
+  background:
+    linear-gradient(180deg, rgba(21, 124, 80, 0.08), rgba(21, 124, 80, 0) 44%),
+    rgba(255, 255, 255, 0.86);
+}
+
+.traffic-panel.is-error {
+  border-color: rgba(191, 31, 47, 0.26);
+  background:
+    linear-gradient(180deg, rgba(191, 31, 47, 0.08), rgba(191, 31, 47, 0) 44%),
+    rgba(255, 249, 250, 0.92);
+}
+
+.traffic-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.traffic-head-copy {
+  display: grid;
+  gap: 5px;
+}
+
+.traffic-title,
+.traffic-period-line,
+.traffic-note {
+  margin: 0;
+}
+
+.traffic-title {
+  color: var(--ink);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.traffic-cycle-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(14, 143, 138, 0.24);
+  background: rgba(14, 143, 138, 0.09);
+  color: var(--accent-strong);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.traffic-period-line,
+.traffic-note {
+  color: #617089;
+  font-size: 0.8rem;
+}
+
+.traffic-period-value {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.traffic-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.traffic-metric {
+  display: grid;
+  gap: 6px;
+  min-height: 84px;
+  padding: 11px;
+  border-radius: 13px;
+  border: 1px solid rgba(184, 171, 147, 0.7);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(250, 247, 240, 0.9));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+.traffic-metric-label {
+  color: #6a778f;
+  font-size: 0.75rem;
+}
+
+.traffic-rx-value,
+.traffic-tx-value,
+.traffic-total-value {
+  color: #173650;
+  font-size: 0.92rem;
+  line-height: 1.3;
+  font-family: "IBM Plex Mono", "SF Mono", "Consolas", monospace;
+}
+
+.traffic-quota-panel {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.traffic-quota-stat {
+  display: grid;
+  gap: 6px;
+  padding: 10px 11px;
+  border-radius: 13px;
+  border: 1px solid rgba(14, 143, 138, 0.16);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(241, 249, 248, 0.88));
+}
+
+.traffic-quota-label {
+  color: #5e708a;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.traffic-quota-value,
+.traffic-remaining-value,
+.traffic-percent-value {
+  color: #173650;
+  font-size: 0.92rem;
+  line-height: 1.3;
+  font-family: "IBM Plex Mono", "SF Mono", "Consolas", monospace;
+}
+
+.traffic-progress {
+  grid-column: 1 / -1;
+  position: relative;
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(184, 171, 147, 0.22);
+}
+
+.traffic-progress-bar {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: inherit;
+  background: linear-gradient(135deg, #1f4f70, #0e8f8a);
+  transition: width 180ms ease;
+}
+
+.traffic-progress.is-configured .traffic-progress-bar {
+  box-shadow: 0 6px 14px rgba(14, 143, 138, 0.2);
+}
+
+.traffic-progress.is-exceeded .traffic-progress-bar {
+  background: linear-gradient(135deg, #ad2234, #d94f5e);
+}
+
+.traffic-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.traffic-foot .traffic-btn {
+  min-height: 38px;
+  padding-inline: 14px;
+  white-space: nowrap;
 }
 
 .form-row {
@@ -1502,9 +1734,39 @@ body.has-modal-open {
   .config-actions button,
   .submit-btn,
   .status-btn,
-  .network-btn {
+  .network-btn,
+  .traffic-btn {
     width: 100%;
     justify-content: center;
+  }
+
+  .traffic-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .traffic-quota-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .server-meta-grid {
+    grid-template-columns: 1fr;
+    border-top: 0;
+    border-bottom: 0;
+  }
+
+  .server-meta-item {
+    padding: 10px 0;
+  }
+
+  .server-meta-item + .server-meta-item {
+    padding-left: 0;
+    padding-right: 0;
+    border-left: 0;
+    border-top: 1px dashed rgba(184, 171, 147, 0.76);
+  }
+
+  .traffic-foot {
+    align-items: stretch;
   }
 
   .theme-dialog-actions {
