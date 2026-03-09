@@ -48,6 +48,7 @@ SSH_OPTIONS_WITH_ARG = {
 }
 SMS_CODE_TTL_SECONDS = 15 * 60
 SMS_CODE_TTL_MINUTES = SMS_CODE_TTL_SECONDS // 60
+LOGIN_SESSION_TTL_SECONDS = 2 * 60 * 60
 SMS_DAILY_SEND_LIMIT = 2
 SMS_CODE_LENGTH = 6
 SMS_LOGIN_RUNTIME: dict[str, dict[str, Any]] = {}
@@ -629,6 +630,25 @@ def get_session_display_user() -> str:
     return str(session.get("username", "")).strip()
 
 
+def get_session_expires_at() -> float:
+    try:
+        return float(session.get("login_expires_at", 0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def is_logged_in_session(expected_username: str) -> bool:
+    if not session.get("logged_in"):
+        return False
+    if str(session.get("username", "")).strip() != expected_username:
+        return False
+    expires_at = get_session_expires_at()
+    if expires_at <= 0 or time.time() >= expires_at:
+        session.clear()
+        return False
+    return True
+
+
 @app.before_request
 def require_login():
     endpoint = request.endpoint or ""
@@ -640,7 +660,7 @@ def require_login():
         return None
 
     expected_username = creds[0]
-    if session.get("logged_in") and session.get("username") == expected_username:
+    if is_logged_in_session(expected_username):
         return None
 
     if request.path.startswith("/api/"):
@@ -1177,7 +1197,7 @@ def login():
     if not is_safe_next(next_url):
         next_url = default_next
 
-    if session.get("logged_in") and session.get("username") == creds[0]:
+    if is_logged_in_session(creds[0]):
         return redirect(next_url)
 
     error = None
@@ -1195,9 +1215,11 @@ def login():
                 ok, message = login_with_sms(phone, sms_code, sms_login)
                 if ok:
                     session.clear()
+                    now_ts = time.time()
                     session["logged_in"] = True
                     session["username"] = creds[0]
                     session["display_user"] = phone
+                    session["login_expires_at"] = now_ts + LOGIN_SESSION_TTL_SECONDS
                     return redirect(next_url)
                 error = message
         else:
@@ -1205,9 +1227,11 @@ def login():
             password = request.form.get("password", "")
             if login_with_password(username, password, creds):
                 session.clear()
+                now_ts = time.time()
                 session["logged_in"] = True
                 session["username"] = creds[0]
                 session["display_user"] = creds[0]
+                session["login_expires_at"] = now_ts + LOGIN_SESSION_TTL_SECONDS
                 return redirect(next_url)
             error = "用户名或密码错误。"
 

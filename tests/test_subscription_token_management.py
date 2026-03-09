@@ -313,6 +313,58 @@ class SubscriptionTokenManagementTests(unittest.TestCase):
         self.assertTrue(body["ok"])
         self.assertEqual(body["count"], 1)
 
+    def test_api_requires_relogin_after_session_expires(self) -> None:
+        self.write_config(
+            subscriptions={"teamA": ["hk-main"]},
+            auth={"username": "admin", "password": "pass123"},
+        )
+        login_ts = app_module.time.time()
+        with patch.object(app_module.time, "time", return_value=login_ts):
+            login_resp = self.client.post(
+                "/login",
+                data={"username": "admin", "password": "pass123", "next": "/"},
+                follow_redirects=False,
+            )
+        self.assertEqual(login_resp.status_code, 302)
+        with self.client.session_transaction() as session:
+            self.assertEqual(
+                session.get("login_expires_at"),
+                login_ts + app_module.LOGIN_SESSION_TTL_SECONDS,
+            )
+
+        expired_ts = login_ts + app_module.LOGIN_SESSION_TTL_SECONDS + 1
+        with patch.object(app_module.time, "time", return_value=expired_ts):
+            list_resp = self.client.get("/api/subscriptions")
+
+        self.assertEqual(list_resp.status_code, 401)
+        body = list_resp.get_json()
+        self.assertFalse(body["ok"])
+        self.assertIn("unauthorized", body["message"].lower())
+        with self.client.session_transaction() as session:
+            self.assertFalse(session.get("logged_in"))
+
+    def test_page_redirects_to_login_after_session_expires(self) -> None:
+        self.write_config(
+            subscriptions={"teamA": ["hk-main"]},
+            auth={"username": "admin", "password": "pass123"},
+        )
+        login_ts = app_module.time.time()
+        with patch.object(app_module.time, "time", return_value=login_ts):
+            login_resp = self.client.post(
+                "/login",
+                data={"username": "admin", "password": "pass123", "next": "/"},
+                follow_redirects=False,
+            )
+        self.assertEqual(login_resp.status_code, 302)
+
+        expired_ts = login_ts + app_module.LOGIN_SESSION_TTL_SECONDS + 1
+        with patch.object(app_module.time, "time", return_value=expired_ts):
+            page_resp = self.client.get("/", follow_redirects=False)
+
+        self.assertEqual(page_resp.status_code, 302)
+        location = page_resp.headers.get("Location", "")
+        self.assertTrue(location.startswith("/login?next="))
+
     def test_send_sms_code_requires_whitelisted_phone(self) -> None:
         self.write_config(
             subscriptions={},
