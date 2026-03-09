@@ -41,6 +41,122 @@ async function parseApiResponse(resp) {
   return data;
 }
 
+let closeActiveDialog = null;
+
+function ensureThemeDialog() {
+  let root = document.querySelector("#theme-dialog");
+  if (root) {
+    return {
+      root,
+      backdrop: root.querySelector(".theme-dialog-backdrop"),
+      title: root.querySelector(".theme-dialog-title"),
+      message: root.querySelector(".theme-dialog-message"),
+      cancelBtn: root.querySelector(".theme-dialog-cancel"),
+      confirmBtn: root.querySelector(".theme-dialog-confirm"),
+    };
+  }
+
+  root = document.createElement("div");
+  root.id = "theme-dialog";
+  root.className = "theme-dialog";
+  root.setAttribute("aria-hidden", "true");
+  root.innerHTML = `
+    <div class="theme-dialog-backdrop"></div>
+    <section class="theme-dialog-card" role="dialog" aria-modal="true" aria-labelledby="theme-dialog-title" aria-describedby="theme-dialog-message">
+      <h3 id="theme-dialog-title" class="theme-dialog-title"></h3>
+      <p id="theme-dialog-message" class="theme-dialog-message"></p>
+      <div class="theme-dialog-actions">
+        <button type="button" class="theme-dialog-btn theme-dialog-cancel">取消</button>
+        <button type="button" class="theme-dialog-btn theme-dialog-confirm">确认</button>
+      </div>
+    </section>
+  `;
+  document.body.appendChild(root);
+
+  return {
+    root,
+    backdrop: root.querySelector(".theme-dialog-backdrop"),
+    title: root.querySelector(".theme-dialog-title"),
+    message: root.querySelector(".theme-dialog-message"),
+    cancelBtn: root.querySelector(".theme-dialog-cancel"),
+    confirmBtn: root.querySelector(".theme-dialog-confirm"),
+  };
+}
+
+function showThemeDialog({
+  title = "提示",
+  message = "",
+  confirmText = "确认",
+  cancelText = "取消",
+  danger = false,
+  hideCancel = false,
+} = {}) {
+  const modal = ensureThemeDialog();
+  if (!modal.root || !modal.backdrop || !modal.title || !modal.message || !modal.cancelBtn || !modal.confirmBtn) {
+    return Promise.resolve(false);
+  }
+
+  if (typeof closeActiveDialog === "function") closeActiveDialog(false);
+
+  modal.title.textContent = String(title || "提示");
+  modal.message.textContent = String(message || "");
+  modal.confirmBtn.textContent = String(confirmText || "确认");
+  modal.cancelBtn.textContent = String(cancelText || "取消");
+  modal.cancelBtn.hidden = Boolean(hideCancel);
+  modal.cancelBtn.disabled = false;
+  modal.confirmBtn.disabled = false;
+  modal.confirmBtn.classList.toggle("is-danger", Boolean(danger));
+
+  modal.root.classList.add("is-open");
+  modal.root.setAttribute("aria-hidden", "false");
+  document.body.classList.add("has-modal-open");
+
+  return new Promise((resolve) => {
+    let settled = false;
+
+    const cleanup = () => {
+      modal.backdrop.removeEventListener("click", onCancel);
+      modal.cancelBtn.removeEventListener("click", onCancel);
+      modal.confirmBtn.removeEventListener("click", onConfirm);
+      document.removeEventListener("keydown", onKeydown);
+      modal.root.classList.remove("is-open");
+      modal.root.setAttribute("aria-hidden", "true");
+      document.body.classList.remove("has-modal-open");
+      closeActiveDialog = null;
+    };
+
+    const close = (ok) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(Boolean(ok));
+    };
+
+    const onCancel = () => close(false);
+    const onConfirm = () => close(true);
+    const onKeydown = (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        close(false);
+      }
+    };
+
+    closeActiveDialog = close;
+    modal.backdrop.addEventListener("click", onCancel);
+    modal.cancelBtn.addEventListener("click", onCancel);
+    modal.confirmBtn.addEventListener("click", onConfirm);
+    document.addEventListener("keydown", onKeydown);
+    window.setTimeout(() => {
+      if (hideCancel) modal.confirmBtn.focus();
+      else modal.cancelBtn.focus();
+    }, 0);
+  });
+}
+
+function showThemeConfirm(options) {
+  return showThemeDialog(options);
+}
+
 function markResult(resultEl, ok, text) {
   resultEl.classList.remove("ok", "err");
   if (ok === true) resultEl.classList.add("ok");
@@ -617,7 +733,14 @@ function initSubscriptionManagerPage() {
       deleteBtn.className = "danger-btn";
       deleteBtn.textContent = "删除";
       deleteBtn.addEventListener("click", async () => {
-        if (!window.confirm(`确认删除订阅 "${token}" 吗？`)) return;
+        const confirmed = await showThemeConfirm({
+          title: "删除订阅",
+          message: `确认删除订阅 "${token}" 吗？该操作不可撤销。`,
+          confirmText: "确认删除",
+          cancelText: "取消",
+          danger: true,
+        });
+        if (!confirmed) return;
         const restore = setButtonLoading(deleteBtn, "删除中...");
         try {
           const resp = await fetch(`/api/subscriptions/${encodeURIComponent(token)}`, { method: "DELETE" });
