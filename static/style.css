@@ -558,6 +558,7 @@ body.has-modal-open {
 
 .form-row input,
 .sub-token-row input,
+.sub-expiry-custom input,
 .editor-grid input,
 .login-form input {
   width: 100%;
@@ -574,6 +575,7 @@ body.has-modal-open {
 
 .form-row input:focus,
 .sub-token-row input:focus,
+.sub-expiry-custom input:focus,
 .editor-grid input:focus,
 .login-form input:focus {
   border-color: var(--accent);
@@ -726,6 +728,321 @@ body.has-modal-open {
   gap: 6px;
 }
 
+.sub-expiry-panel {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background:
+    linear-gradient(180deg, rgba(14, 143, 138, 0.06), rgba(14, 143, 138, 0) 38%),
+    rgba(255, 255, 255, 0.78);
+  padding: 16px;
+  display: grid;
+  gap: 14px;
+}
+
+.sub-expiry-copy h3 {
+  margin: 0 0 4px;
+  font-size: 0.98rem;
+}
+
+.sub-expiry-copy p {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.86rem;
+}
+
+.sub-expiry-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.sub-expiry-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex: 1 1 520px;
+}
+
+.sub-expiry-btn {
+  min-height: 42px;
+  padding: 8px 12px;
+}
+
+.sub-expiry-btn.is-active {
+  border-color: #2a6286;
+  background: linear-gradient(135deg, #d9ecff, #e4f5ff);
+  color: #173650;
+  box-shadow: 0 5px 12px rgba(45, 91, 136, 0.16);
+}
+
+.sub-expiry-custom {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  flex: 0 1 360px;
+}
+
+.sub-expiry-custom-label {
+  color: #5f6f89;
+  font-size: 0.83rem;
+  white-space: nowrap;
+}
+
+.sub-expiry-picker {
+  position: relative;
+  flex: 1 1 auto;
+}
+
+.sub-expiry-trigger {
+  width: 100%;
+  min-height: 42px;
+  border-radius: 12px;
+  border: 1px solid var(--line-strong);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 244, 234, 0.92)),
+    #fff;
+  color: var(--ink);
+  padding: 9px 12px;
+  font-size: 0.9rem;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+}
+
+.sub-expiry-trigger:hover {
+  transform: translateY(-1px);
+  border-color: var(--accent);
+}
+
+.sub-expiry-trigger:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(14, 143, 138, 0.16);
+}
+
+.sub-expiry-trigger.is-placeholder {
+  color: #8a7d64;
+}
+
+.sub-expiry-popover {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 80;
+  width: min(360px, calc(100vw - 48px));
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: linear-gradient(160deg, var(--paper), var(--paper-soft));
+  box-shadow: 0 18px 40px rgba(26, 35, 52, 0.2);
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+}
+
+.sub-expiry-popover[hidden] {
+  display: none;
+}
+
+.sub-expiry-popover-head {
+  display: grid;
+  grid-template-columns: 36px 1fr 36px;
+  align-items: center;
+  gap: 8px;
+}
+
+.sub-expiry-nav {
+  min-height: 36px;
+  border-radius: 10px;
+  border: 1px solid #b8c8d8;
+  background: #f8fbff;
+  color: #26405c;
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.sub-expiry-month-label {
+  text-align: center;
+  font-size: 0.96rem;
+  color: var(--ink);
+}
+
+.sub-expiry-weekdays,
+.sub-expiry-days {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.sub-expiry-weekdays span {
+  text-align: center;
+  color: #7a6a56;
+  font-size: 0.77rem;
+  font-weight: 700;
+}
+
+.sub-expiry-day {
+  min-height: 38px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  background: #fff;
+  color: var(--ink);
+  font-size: 0.86rem;
+  cursor: pointer;
+  transition: transform 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+
+.sub-expiry-day:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: rgba(14, 143, 138, 0.3);
+  background: #f3fbfa;
+}
+
+.sub-expiry-day.is-selected {
+  border-color: #2a6286;
+  background: linear-gradient(135deg, #d9ecff, #e4f5ff);
+  color: #173650;
+  box-shadow: 0 5px 12px rgba(45, 91, 136, 0.16);
+}
+
+.sub-expiry-day.is-today {
+  border-color: rgba(249, 115, 22, 0.32);
+}
+
+.sub-expiry-day.is-outside {
+  color: #a29580;
+  background: rgba(248, 244, 234, 0.72);
+}
+
+.sub-expiry-day:disabled {
+  color: #b3a690;
+  background: #f5f1e8;
+  cursor: not-allowed;
+}
+
+.sub-expiry-time-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.sub-expiry-stepper {
+  display: grid;
+  gap: 8px;
+}
+
+.sub-expiry-stepper span {
+  color: #5f6f89;
+  font-size: 0.8rem;
+}
+
+.sub-expiry-stepper-controls {
+  display: grid;
+  grid-template-columns: 42px 1fr 42px;
+  align-items: center;
+  gap: 8px;
+}
+
+.sub-expiry-stepper-btn {
+  min-height: 42px;
+  border-radius: 12px;
+  border: 1px solid #b8c8d8;
+  background: #f8fbff;
+  color: #26405c;
+  font-size: 1.1rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+
+.sub-expiry-stepper-btn:hover {
+  transform: translateY(-1px);
+  border-color: #78a5c7;
+  background: #edf7ff;
+}
+
+.sub-expiry-stepper-value {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  border-radius: 12px;
+  border: 1px solid var(--line-strong);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 244, 234, 0.92)),
+    #fff;
+  color: var(--ink);
+  font-size: 1rem;
+  letter-spacing: 0.08em;
+  font-family: "IBM Plex Mono", "SF Mono", "Consolas", monospace;
+}
+
+.sub-expiry-minute-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sub-expiry-minute-btn {
+  min-height: 30px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(14, 143, 138, 0.24);
+  background: rgba(14, 143, 138, 0.08);
+  color: var(--accent-strong);
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+
+.sub-expiry-minute-btn:hover {
+  transform: translateY(-1px);
+  border-color: rgba(14, 143, 138, 0.4);
+  background: rgba(14, 143, 138, 0.14);
+}
+
+.sub-expiry-minute-btn.is-active {
+  border-color: #2a6286;
+  background: linear-gradient(135deg, #d9ecff, #e4f5ff);
+  color: #173650;
+}
+
+.sub-expiry-popover-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sub-expiry-popover-actions button:last-child {
+  border: 1px solid #22324f;
+  border-radius: 12px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0) 42%),
+    linear-gradient(135deg, #213a63, #1f4f70 52%, #0e8f8a);
+  color: #f8fcff;
+  font-weight: 700;
+  padding: 9px 13px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    0 8px 16px rgba(15, 39, 73, 0.2);
+}
+
+.sub-expiry-custom input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 42px;
+  padding: 9px 11px;
+}
+
+.sub-expiry-hint {
+  margin: 0;
+  color: #6e5f46;
+  font-size: 0.85rem;
+}
+
 .sub-manage-jump {
   margin: 0;
   color: #6e5f46;
@@ -859,11 +1176,54 @@ body.has-modal-open {
   gap: 6px;
 }
 
+.sub-token-item.is-expired {
+  background: linear-gradient(160deg, #fff7f8, #fff);
+  border-color: rgba(191, 31, 47, 0.26);
+}
+
+.sub-token-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .sub-token-token {
   margin: 0;
   color: #1f304e;
   font-size: 0.9rem;
   font-family: "IBM Plex Mono", "SF Mono", "Consolas", monospace;
+}
+
+.sub-token-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.sub-token-badge.is-permanent {
+  border-color: rgba(14, 143, 138, 0.28);
+  background: rgba(14, 143, 138, 0.1);
+  color: var(--accent-strong);
+}
+
+.sub-token-badge.is-active {
+  border-color: rgba(21, 124, 80, 0.28);
+  background: rgba(21, 124, 80, 0.1);
+  color: var(--ok);
+}
+
+.sub-token-badge.is-expired {
+  border-color: rgba(191, 31, 47, 0.3);
+  background: rgba(191, 31, 47, 0.1);
+  color: var(--danger);
 }
 
 .sub-token-meta {
@@ -1094,6 +1454,39 @@ body.has-modal-open {
   .card-actions,
   .sub-token-actions {
     width: 100%;
+  }
+
+  .sub-expiry-presets {
+    width: 100%;
+  }
+
+  .sub-expiry-btn {
+    flex: 1 1 calc(50% - 8px);
+    justify-content: center;
+  }
+
+  .sub-expiry-controls {
+    align-items: stretch;
+  }
+
+  .sub-expiry-custom {
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+  }
+
+  .sub-expiry-custom-label {
+    white-space: normal;
+  }
+
+  .sub-expiry-popover {
+    left: 0;
+    right: auto;
+    width: min(100%, 360px);
+  }
+
+  .sub-expiry-time-grid {
+    grid-template-columns: 1fr;
   }
 
   .config-actions button,

@@ -157,6 +157,89 @@ function showThemeConfirm(options) {
   return showThemeDialog(options);
 }
 
+function parseDateValue(rawValue) {
+  if (!rawValue) return null;
+  const date = rawValue instanceof Date ? rawValue : new Date(rawValue);
+  if (Number.isNaN(date.getTime())) return null;
+  return date;
+}
+
+function formatDateTimeDisplay(rawValue) {
+  const date = parseDateValue(rawValue);
+  if (!date) return rawValue ? String(rawValue) : "";
+  return new Intl.DateTimeFormat("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function toDateTimeLocalValue(rawValue) {
+  const date = parseDateValue(rawValue);
+  if (!date) return "";
+  const pad = (value) => String(value).padStart(2, "0");
+  return [
+    date.getFullYear(),
+    pad(date.getMonth() + 1),
+    pad(date.getDate()),
+  ].join("-") + `T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function cloneDate(rawValue) {
+  const date = parseDateValue(rawValue);
+  return date ? new Date(date.getTime()) : null;
+}
+
+function roundUpToNextMinute(rawValue = new Date()) {
+  const date = cloneDate(rawValue) || new Date();
+  date.setSeconds(0, 0);
+  date.setMinutes(date.getMinutes() + 1);
+  return date;
+}
+
+function addDays(rawValue, days) {
+  const date = cloneDate(rawValue) || new Date();
+  date.setDate(date.getDate() + days);
+  return date;
+}
+
+function buildLocalDate(year, monthIndex, day, hour, minute) {
+  return new Date(year, monthIndex, day, hour, minute, 0, 0);
+}
+
+function isSameCalendarDay(a, b) {
+  const left = parseDateValue(a);
+  const right = parseDateValue(b);
+  if (!left || !right) return false;
+  return left.getFullYear() === right.getFullYear()
+    && left.getMonth() === right.getMonth()
+    && left.getDate() === right.getDate();
+}
+
+function isSameCalendarMonth(a, b) {
+  const left = parseDateValue(a);
+  const right = parseDateValue(b);
+  if (!left || !right) return false;
+  return left.getFullYear() === right.getFullYear() && left.getMonth() === right.getMonth();
+}
+
+function monthLabel(rawValue) {
+  const date = parseDateValue(rawValue);
+  if (!date) return "";
+  return new Intl.DateTimeFormat("zh-CN", {
+    year: "numeric",
+    month: "long",
+  }).format(date);
+}
+
+function formatSubscriptionExpiry(expiresAt, expired) {
+  if (!expiresAt) return "永久有效";
+  const display = formatDateTimeDisplay(expiresAt);
+  return expired ? `已过期：${display}` : `截止时间：${display}`;
+}
+
 function markResult(resultEl, ok, text) {
   resultEl.classList.remove("ok", "err");
   if (ok === true) resultEl.classList.add("ok");
@@ -300,6 +383,9 @@ function formatSubscriptionResult(data) {
   if (data.overwritten !== undefined) lines.push(`overwritten: ${data.overwritten ? "yes" : "no"}`);
   if (data.server_count !== undefined) lines.push(`server count: ${data.server_count}`);
   if (Array.isArray(data.server_ids) && data.server_ids.length) lines.push(`server ids: ${data.server_ids.join(", ")}`);
+  if (data.expires_at !== undefined || data.expiry_state !== undefined) {
+    lines.push(`expiry: ${formatSubscriptionExpiry(data.expires_at, Boolean(data.expired))}`);
+  }
   if (data.url) lines.push(`subscription url: ${data.url}`);
   if (Array.isArray(data.links) && data.links.length) lines.push(`links:\n${data.links.join("\n")}`);
   return lines.join("\n");
@@ -542,8 +628,293 @@ function initSubscriptionPanel() {
   const selectAllBtn = document.querySelector("#sub-select-all-btn");
   const clearBtn = document.querySelector("#sub-clear-btn");
   const tokenInput = document.querySelector("#sub-token-input");
+  const expiryTrigger = document.querySelector("#sub-expiry-trigger");
+  const expiryInput = document.querySelector("#sub-expiry-input");
+  const expiryPopover = document.querySelector("#sub-expiry-popover");
+  const expiryMonthLabel = document.querySelector("#sub-expiry-month-label");
+  const expiryDaysEl = document.querySelector("#sub-expiry-days");
+  const expiryHourEl = document.querySelector("#sub-expiry-hour");
+  const expiryMinuteEl = document.querySelector("#sub-expiry-minute");
+  const expiryAdjustButtons = Array.from(document.querySelectorAll(".sub-expiry-stepper-btn"));
+  const expiryMinutePresetButtons = Array.from(document.querySelectorAll(".sub-expiry-minute-btn"));
+  const expiryApplyBtn = document.querySelector("#sub-expiry-apply");
+  const expiryCancelBtn = document.querySelector("#sub-expiry-cancel");
+  const expiryNavButtons = Array.from(document.querySelectorAll(".sub-expiry-nav"));
+  const expiryHintEl = document.querySelector("#sub-expiry-hint");
+  const expiryPresetButtons = Array.from(document.querySelectorAll(".sub-expiry-btn"));
   const resultEl = document.querySelector("#sub-result");
   if (!genBtn || !selectAllBtn || !clearBtn || !resultEl) return;
+
+  let expiryMode = "permanent";
+  let customExpiryDate = null;
+  let pickerDraftDate = null;
+  let pickerViewDate = roundUpToNextMinute();
+  let removePickerOutsideListener = null;
+
+  const getPresetDays = () => {
+    if (expiryMode === "1d") return 1;
+    if (expiryMode === "7d") return 7;
+    if (expiryMode === "30d") return 30;
+    return null;
+  };
+
+  const getActiveExpiryDate = () => {
+    if (expiryMode === "custom" && customExpiryDate) {
+      return cloneDate(customExpiryDate);
+    }
+    const presetDays = getPresetDays();
+    if (presetDays) {
+      return addDays(roundUpToNextMinute(), presetDays);
+    }
+    return customExpiryDate ? cloneDate(customExpiryDate) : addDays(roundUpToNextMinute(), 1);
+  };
+
+  const updateExpiryTrigger = () => {
+    if (!expiryTrigger) return;
+    let label = "点击选择时间";
+    if (expiryMode === "custom" && customExpiryDate) {
+      label = formatDateTimeDisplay(customExpiryDate);
+      expiryTrigger.classList.remove("is-placeholder");
+    } else if (expiryMode !== "permanent") {
+      label = formatDateTimeDisplay(getActiveExpiryDate());
+      expiryTrigger.classList.remove("is-placeholder");
+    } else {
+      expiryTrigger.classList.add("is-placeholder");
+    }
+    expiryTrigger.textContent = label;
+  };
+
+  const syncExpiryButtons = () => {
+    for (const button of expiryPresetButtons) {
+      button.classList.toggle("is-active", button.dataset.expiryMode === expiryMode);
+    }
+  };
+
+  const updateExpiryHint = () => {
+    if (!expiryHintEl) return;
+    if (expiryMode === "permanent") {
+      expiryHintEl.textContent = "当前设置：永久有效";
+      return;
+    }
+    if (expiryMode === "custom") {
+      if (!customExpiryDate) {
+        expiryHintEl.textContent = "当前设置：请选择自定义有效期";
+        return;
+      }
+      expiryHintEl.textContent = `当前设置：${formatSubscriptionExpiry(customExpiryDate, false)}`;
+      return;
+    }
+    const presetDays = getPresetDays();
+    if (!presetDays) {
+      expiryHintEl.textContent = "当前设置：永久有效";
+      return;
+    }
+    expiryHintEl.textContent = `当前设置：${formatSubscriptionExpiry(getActiveExpiryDate(), false)}`;
+  };
+
+  const setExpiryMode = (mode) => {
+    expiryMode = mode;
+    syncExpiryButtons();
+    updateExpiryTrigger();
+    updateExpiryHint();
+  };
+
+  const syncPickerTimeInputs = () => {
+    if (!pickerDraftDate || !expiryHourEl || !expiryMinuteEl) return;
+    expiryHourEl.textContent = String(pickerDraftDate.getHours()).padStart(2, "0");
+    expiryMinuteEl.textContent = String(pickerDraftDate.getMinutes()).padStart(2, "0");
+    for (const button of expiryMinutePresetButtons) {
+      const minute = Number(button.dataset.expiryMinute || "-1");
+      button.classList.toggle("is-active", minute === pickerDraftDate.getMinutes());
+    }
+  };
+
+  const renderPickerCalendar = () => {
+    if (!expiryDaysEl || !expiryMonthLabel) return;
+    expiryMonthLabel.textContent = monthLabel(pickerViewDate);
+    expiryDaysEl.innerHTML = "";
+
+    const firstOfMonth = buildLocalDate(pickerViewDate.getFullYear(), pickerViewDate.getMonth(), 1, 0, 0);
+    const weekdayOffset = (firstOfMonth.getDay() + 6) % 7;
+    const gridStart = buildLocalDate(pickerViewDate.getFullYear(), pickerViewDate.getMonth(), 1 - weekdayOffset, 0, 0);
+    const minSelectableDate = roundUpToNextMinute();
+
+    for (let index = 0; index < 42; index += 1) {
+      const dayDate = addDays(gridStart, index);
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "sub-expiry-day";
+      button.textContent = String(dayDate.getDate());
+      button.dataset.dayValue = toDateTimeLocalValue(dayDate);
+
+      if (!isSameCalendarMonth(dayDate, pickerViewDate)) {
+        button.classList.add("is-outside");
+      }
+      if (pickerDraftDate && isSameCalendarDay(dayDate, pickerDraftDate)) {
+        button.classList.add("is-selected");
+      }
+      if (isSameCalendarDay(dayDate, new Date())) {
+        button.classList.add("is-today");
+      }
+
+      const dayEnd = buildLocalDate(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate(), 23, 59);
+      if (dayEnd.getTime() <= minSelectableDate.getTime()) {
+        button.disabled = true;
+      }
+      button.addEventListener("click", () => {
+        const current = pickerDraftDate || getActiveExpiryDate();
+        pickerDraftDate = buildLocalDate(
+          dayDate.getFullYear(),
+          dayDate.getMonth(),
+          dayDate.getDate(),
+          current.getHours(),
+          current.getMinutes(),
+        );
+        syncPickerTimeInputs();
+        renderPickerCalendar();
+      });
+      expiryDaysEl.appendChild(button);
+    }
+  };
+
+  const closePicker = () => {
+    if (!expiryPopover || !expiryTrigger) return;
+    expiryPopover.hidden = true;
+    expiryTrigger.setAttribute("aria-expanded", "false");
+    if (typeof removePickerOutsideListener === "function") {
+      removePickerOutsideListener();
+      removePickerOutsideListener = null;
+    }
+  };
+
+  const openPicker = () => {
+    if (!expiryPopover || !expiryTrigger) return;
+    const baseDate = getActiveExpiryDate();
+    pickerDraftDate = cloneDate(baseDate) || addDays(roundUpToNextMinute(), 1);
+    pickerViewDate = buildLocalDate(pickerDraftDate.getFullYear(), pickerDraftDate.getMonth(), 1, 0, 0);
+    syncPickerTimeInputs();
+    renderPickerCalendar();
+    expiryPopover.hidden = false;
+    expiryTrigger.setAttribute("aria-expanded", "true");
+    if (typeof removePickerOutsideListener === "function") removePickerOutsideListener();
+    const onDocumentClick = (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (expiryPopover.contains(target) || expiryTrigger.contains(target)) return;
+      closePicker();
+    };
+    const onDocumentKeydown = (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closePicker();
+      }
+    };
+    document.addEventListener("mousedown", onDocumentClick);
+    document.addEventListener("keydown", onDocumentKeydown);
+    removePickerOutsideListener = () => {
+      document.removeEventListener("mousedown", onDocumentClick);
+      document.removeEventListener("keydown", onDocumentKeydown);
+    };
+  };
+
+  const buildExpiryPayload = () => {
+    if (expiryMode === "permanent") {
+      return { value: null, error: "" };
+    }
+    if (expiryMode === "custom") {
+      if (!customExpiryDate) {
+        return { value: null, error: "请选择订阅有效期。" };
+      }
+      const customDate = cloneDate(customExpiryDate);
+      if (!customDate) {
+        return { value: null, error: "有效期时间格式无效。" };
+      }
+      if (customDate.getTime() <= Date.now()) {
+        return { value: null, error: "订阅有效期必须晚于当前时间。" };
+      }
+      return { value: customDate.toISOString(), error: "" };
+    }
+    const presetDays = getPresetDays();
+    if (!presetDays) {
+      return { value: null, error: "" };
+    }
+    return { value: new Date(Date.now() + presetDays * 86400000).toISOString(), error: "" };
+  };
+
+  for (const button of expiryPresetButtons) {
+    button.addEventListener("click", () => {
+      const mode = String(button.dataset.expiryMode || "").trim();
+      if (!mode) return;
+      setExpiryMode(mode);
+      if (mode === "custom") openPicker();
+    });
+  }
+  for (const adjustButton of expiryAdjustButtons) {
+    adjustButton.addEventListener("click", () => {
+      if (!pickerDraftDate) return;
+      const rawAdjust = String(adjustButton.dataset.expiryAdjust || "").trim();
+      const [unit, deltaValue] = rawAdjust.split(":");
+      const delta = Number(deltaValue);
+      if (!unit || !Number.isFinite(delta)) return;
+      if (unit === "hour") {
+        pickerDraftDate.setHours(pickerDraftDate.getHours() + delta);
+      } else if (unit === "minute") {
+        pickerDraftDate.setMinutes(pickerDraftDate.getMinutes() + delta);
+      }
+      syncPickerTimeInputs();
+      renderPickerCalendar();
+    });
+  }
+  for (const minuteButton of expiryMinutePresetButtons) {
+    minuteButton.addEventListener("click", () => {
+      if (!pickerDraftDate) return;
+      const minute = Number(minuteButton.dataset.expiryMinute || "-1");
+      if (!Number.isInteger(minute) || minute < 0 || minute > 59) return;
+      pickerDraftDate.setMinutes(minute);
+      syncPickerTimeInputs();
+      renderPickerCalendar();
+    });
+  }
+  for (const navButton of expiryNavButtons) {
+    navButton.addEventListener("click", () => {
+      const step = Number(navButton.dataset.expiryNav || "0");
+      if (!Number.isInteger(step) || !pickerViewDate) return;
+      pickerViewDate = buildLocalDate(pickerViewDate.getFullYear(), pickerViewDate.getMonth() + step, 1, 0, 0);
+      renderPickerCalendar();
+    });
+  }
+  if (expiryTrigger) {
+    expiryTrigger.addEventListener("click", () => {
+      if (expiryPopover && !expiryPopover.hidden) {
+        closePicker();
+      } else {
+        openPicker();
+      }
+    });
+  }
+  if (expiryCancelBtn) {
+    expiryCancelBtn.addEventListener("click", () => {
+      closePicker();
+    });
+  }
+  if (expiryApplyBtn) {
+    expiryApplyBtn.addEventListener("click", () => {
+      const candidate = cloneDate(pickerDraftDate);
+      if (!candidate) {
+        markResult(resultEl, false, "请选择订阅有效期。");
+        return;
+      }
+      if (candidate.getTime() <= Date.now()) {
+        markResult(resultEl, false, "订阅有效期必须晚于当前时间。");
+        return;
+      }
+      customExpiryDate = candidate;
+      if (expiryInput) expiryInput.value = toDateTimeLocalValue(candidate);
+      setExpiryMode("custom");
+      closePicker();
+    });
+  }
+  setExpiryMode("permanent");
 
   const allChecks = () => Array.from(document.querySelectorAll(".server-card .sub-select"));
   const getServerIdByCheck = (el) => {
@@ -586,6 +957,11 @@ function initSubscriptionPanel() {
       markResult(resultEl, false, "自定义订阅标识只能包含字母、数字、-、_，且长度不超过 64。");
       return;
     }
+    const expiryPayload = buildExpiryPayload();
+    if (expiryPayload.error) {
+      markResult(resultEl, false, expiryPayload.error);
+      return;
+    }
 
     const restore = setButtonLoading(genBtn, "生成中...");
     markResult(resultEl, null, "正在生成订阅访问地址...");
@@ -593,7 +969,7 @@ function initSubscriptionPanel() {
       const resp = await fetch("/api/subscription-link", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ server_ids: selectedIds, token }),
+        body: JSON.stringify({ server_ids: selectedIds, token, expires_at: expiryPayload.value }),
       });
       const data = await parseApiResponse(resp);
       if (tokenInput && data.token) tokenInput.value = String(data.token);
@@ -649,6 +1025,8 @@ function initSubscriptionManagerPage() {
     for (const item of items) {
       const token = typeof item.token === "string" ? item.token : "";
       if (!token) continue;
+      const expired = Boolean(item.expired);
+      const expiryState = typeof item.expiry_state === "string" ? item.expiry_state : "permanent";
       const serverIds = Array.isArray(item.server_ids) ? item.server_ids.filter((x) => typeof x === "string" && x) : [];
       const serverNames = Array.isArray(item.server_names) ? item.server_names.filter((x) => typeof x === "string" && x) : [];
       const missingIds = Array.isArray(item.missing_server_ids)
@@ -657,11 +1035,22 @@ function initSubscriptionManagerPage() {
 
       const row = document.createElement("article");
       row.className = "sub-token-item";
+      if (expired) row.classList.add("is-expired");
 
+      const head = document.createElement("div");
+      head.className = "sub-token-head";
       const tokenLine = document.createElement("p");
       tokenLine.className = "sub-token-token";
       tokenLine.textContent = token;
-      row.appendChild(tokenLine);
+      head.appendChild(tokenLine);
+
+      const stateBadge = document.createElement("span");
+      stateBadge.className = `sub-token-badge is-${expiryState}`;
+      if (expiryState === "expired") stateBadge.textContent = "已过期";
+      else if (expiryState === "active") stateBadge.textContent = "生效中";
+      else stateBadge.textContent = "永久有效";
+      head.appendChild(stateBadge);
+      row.appendChild(head);
 
       const infoLine = document.createElement("p");
       infoLine.className = "sub-token-meta";
@@ -681,6 +1070,11 @@ function initSubscriptionManagerPage() {
         missingLine.textContent = `缺失节点: ${missingIds.join(", ")}`;
         row.appendChild(missingLine);
       }
+
+      const expiryLine = document.createElement("p");
+      expiryLine.className = "sub-token-meta";
+      expiryLine.textContent = `有效期: ${formatSubscriptionExpiry(item.expires_at, expired)}`;
+      row.appendChild(expiryLine);
 
       const url = typeof item.url === "string" ? item.url : "";
       if (url) {
@@ -709,6 +1103,10 @@ function initSubscriptionManagerPage() {
       copyBtn.type = "button";
       copyBtn.className = "ghost-btn";
       copyBtn.textContent = "复制链接";
+      if (expired) {
+        copyBtn.disabled = true;
+        copyBtn.title = "订阅已过期，请重新生成";
+      }
       copyBtn.addEventListener("click", async () => {
         if (!url) {
           markResult(resultEl, false, "当前订阅没有可复制的链接。");

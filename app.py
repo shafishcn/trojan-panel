@@ -157,28 +157,80 @@ def normalize_server_id_list(raw_ids: Any) -> list[str]:
     return out
 
 
-def normalize_subscriptions(raw_subscriptions: Any) -> dict[str, list[str]]:
+def get_local_timezone() -> datetime.tzinfo:
+    return datetime.datetime.now().astimezone().tzinfo or datetime.timezone.utc
+
+
+def utc_now() -> datetime.datetime:
+    return datetime.datetime.now(datetime.timezone.utc)
+
+
+def format_utc_datetime(value: datetime.datetime) -> str:
+    return value.astimezone(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def parse_subscription_expiry_dt(raw_expires_at: Any) -> datetime.datetime | None:
+    if raw_expires_at is None:
+        return None
+    value = str(raw_expires_at).strip()
+    if not value:
+        return None
+    normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+    try:
+        parsed = datetime.datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise ValueError("`expires_at` must be a valid ISO datetime.") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=get_local_timezone())
+    return parsed.astimezone(datetime.timezone.utc)
+
+
+def normalize_subscription_expiry(raw_expires_at: Any) -> str | None:
+    parsed = parse_subscription_expiry_dt(raw_expires_at)
+    if parsed is None:
+        return None
+    return format_utc_datetime(parsed)
+
+
+def is_subscription_expired(subscription: dict[str, Any], now: datetime.datetime | None = None) -> bool:
+    expires_at = subscription.get("expires_at")
+    expires_dt = parse_subscription_expiry_dt(expires_at)
+    if expires_dt is None:
+        return False
+    current = now or utc_now()
+    return current >= expires_dt
+
+
+def get_subscription_expiry_state(subscription: dict[str, Any], now: datetime.datetime | None = None) -> str:
+    if not subscription.get("expires_at"):
+        return "permanent"
+    return "expired" if is_subscription_expired(subscription, now=now) else "active"
+
+
+def normalize_subscriptions(raw_subscriptions: Any) -> dict[str, dict[str, Any]]:
     if raw_subscriptions is None:
         return {}
     if not isinstance(raw_subscriptions, dict):
         raise ValueError("Invalid config: `subscriptions` must be an object.")
 
-    out: dict[str, list[str]] = {}
+    out: dict[str, dict[str, Any]] = {}
     for raw_token, raw_value in raw_subscriptions.items():
         token = normalize_token(raw_token)
         if not token:
             continue
 
         value = raw_value
+        expires_at = None
         if isinstance(raw_value, dict):
             value = raw_value.get("server_ids")
+            expires_at = normalize_subscription_expiry(raw_value.get("expires_at"))
         if not isinstance(value, list):
-            continue
-        try:
-            server_ids = normalize_server_id_list(value)
-        except ValueError:
-            continue
-        out[token] = server_ids
+            raise ValueError(f"Subscription `{token}` must be a list or object.")
+        server_ids = normalize_server_id_list(value)
+        out[token] = {
+            "server_ids": server_ids,
+            "expires_at": expires_at,
+        }
     return out
 
 
@@ -193,10 +245,11 @@ def build_new_token(existing_tokens: set[str]) -> str:
             return token
 
 
-def clean_subscription_view(
-    token: str, server_ids: list[str], server_name_by_id: dict[str, str], sub_url: str
-) -> dict[str, Any]:
+def clean_subscription_view(token: str, subscription: dict[str, Any], server_name_by_id: dict[str, str], sub_url: str) -> dict[str, Any]:
+    server_ids = list(subscription.get("server_ids", []))
     missing_server_ids = [x for x in server_ids if x not in server_name_by_id]
+    expires_at = subscription.get("expires_at")
+    expiry_state = get_subscription_expiry_state(subscription)
     return {
         "token": token,
         "url": sub_url,
@@ -204,6 +257,9 @@ def clean_subscription_view(
         "server_count": len(server_ids),
         "server_names": [server_name_by_id[x] for x in server_ids if x in server_name_by_id],
         "missing_server_ids": missing_server_ids,
+        "expires_at": expires_at,
+        "expired": expiry_state == "expired",
+        "expiry_state": expiry_state,
     }
 
 
@@ -1286,11 +1342,15 @@ def subscription_link():
     payload = request.get_json(silent=True) or {}
     raw_ids = payload.get("server_ids")
     raw_token = payload.get("token")
+    raw_expires_at = payload.get("expires_at")
     try:
         server_ids = normalize_server_id_list(raw_ids)
         custom_token = normalize_token(raw_token)
+        expires_at = normalize_subscription_expiry(raw_expires_at)
     except ValueError as exc:
         return jsonify({"ok": False, "message": str(exc)}), 400
+    if expires_at is not None and parse_subscription_expiry_dt(expires_at) <= utc_now():
+        return jsonify({"ok": False, "message": "订阅有效期必须晚于当前时间。"}), 400
 
     config_path = get_config_path()
     try:
@@ -1315,7 +1375,10 @@ def subscription_link():
     existing_tokens = set(subscriptions.keys())
     token = custom_token or build_new_token(existing_tokens)
     overwritten = token in subscriptions
-    subscriptions[token] = server_ids
+    subscriptions[token] = {
+        "server_ids": server_ids,
+        "expires_at": expires_at,
+    }
     config["subscriptions"] = subscriptions
     try:
         save_config(config_path, config)
@@ -1336,6 +1399,9 @@ def subscription_link():
             "server_ids": server_ids,
             "links": links,
             "message": message,
+            "expires_at": expires_at,
+            "expired": False,
+            "expiry_state": "permanent" if expires_at is None else "active",
         }
     )
 
@@ -1361,9 +1427,9 @@ def list_subscriptions():
 
     out: list[dict[str, Any]] = []
     for token in sorted(subscriptions.keys()):
-        server_ids = subscriptions[token]
+        subscription = subscriptions[token]
         sub_url = request.host_url.rstrip("/") + url_for("subscription_content", token=token)
-        out.append(clean_subscription_view(token, server_ids, server_name_by_id, sub_url))
+        out.append(clean_subscription_view(token, subscription, server_name_by_id, sub_url))
 
     return jsonify({"ok": True, "subscriptions": out, "count": len(out)})
 
@@ -1386,8 +1452,8 @@ def delete_subscription(token: str):
     except Exception as exc:  # noqa: BLE001
         return jsonify({"ok": False, "message": f"Config error: {exc}"}), 500
 
-    server_ids = subscriptions.get(clean_token)
-    if server_ids is None:
+    subscription = subscriptions.get(clean_token)
+    if subscription is None:
         return jsonify({"ok": False, "message": "Subscription token not found."}), 404
 
     subscriptions.pop(clean_token, None)
@@ -1402,8 +1468,9 @@ def delete_subscription(token: str):
             "ok": True,
             "message": "Subscription token deleted.",
             "token": clean_token,
-            "server_ids": server_ids,
-            "server_count": len(server_ids),
+            "expires_at": subscription.get("expires_at"),
+            "server_ids": subscription.get("server_ids", []),
+            "server_count": len(subscription.get("server_ids", [])),
         }
     )
 
@@ -1424,9 +1491,12 @@ def subscription_content(token: str):
     except Exception as exc:  # noqa: BLE001
         return Response(f"config error: {exc}\n", mimetype="text/plain"), 500
 
-    server_ids = subscriptions.get(clean_token)
-    if not server_ids:
+    subscription = subscriptions.get(clean_token)
+    if not subscription:
         return Response("subscription token not found\n", mimetype="text/plain"), 404
+    if is_subscription_expired(subscription):
+        return Response("subscription token expired\n", mimetype="text/plain"), 410
+    server_ids = subscription.get("server_ids", [])
 
     selected = select_servers_by_ids(servers, server_ids)
     if len(selected) != len(server_ids):

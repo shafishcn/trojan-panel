@@ -58,6 +58,76 @@
           <label for="sub-token-input">自定义订阅标识（可选，仅字母/数字/-/_）</label>
           <input id="sub-token-input" type="text" placeholder="例如 my-token">
         </div>
+        <section class="sub-expiry-panel" aria-labelledby="sub-expiry-title">
+          <div class="sub-expiry-copy">
+            <h3 id="sub-expiry-title">订阅有效期</h3>
+            <p>默认永久有效。你也可以直接选择快捷有效期，或在需要时自定义到期时间。</p>
+          </div>
+          <div class="sub-expiry-controls">
+            <div class="sub-expiry-presets" role="group" aria-label="订阅有效期快捷选项">
+              <button class="ghost-btn sub-expiry-btn is-active" type="button" data-expiry-mode="permanent">永久</button>
+              <button class="ghost-btn sub-expiry-btn" type="button" data-expiry-mode="1d">1天</button>
+              <button class="ghost-btn sub-expiry-btn" type="button" data-expiry-mode="7d">7天</button>
+              <button class="ghost-btn sub-expiry-btn" type="button" data-expiry-mode="30d">30天</button>
+              <button class="ghost-btn sub-expiry-btn" type="button" data-expiry-mode="custom">自定义</button>
+            </div>
+            <div class="sub-expiry-custom" id="sub-expiry-custom">
+              <span class="sub-expiry-custom-label">时间选择</span>
+              <div class="sub-expiry-picker" id="sub-expiry-picker">
+                <input id="sub-expiry-input" type="hidden">
+                <button id="sub-expiry-trigger" class="sub-expiry-trigger is-placeholder" type="button" aria-haspopup="dialog" aria-expanded="false">
+                  点击选择时间
+                </button>
+                <section id="sub-expiry-popover" class="sub-expiry-popover" hidden aria-label="自定义时间选择">
+                  <div class="sub-expiry-popover-head">
+                    <button type="button" class="sub-expiry-nav" data-expiry-nav="-1" aria-label="上个月">‹</button>
+                    <strong id="sub-expiry-month-label" class="sub-expiry-month-label"></strong>
+                    <button type="button" class="sub-expiry-nav" data-expiry-nav="1" aria-label="下个月">›</button>
+                  </div>
+                  <div class="sub-expiry-weekdays" aria-hidden="true">
+                    <span>一</span>
+                    <span>二</span>
+                    <span>三</span>
+                    <span>四</span>
+                    <span>五</span>
+                    <span>六</span>
+                    <span>日</span>
+                  </div>
+                  <div id="sub-expiry-days" class="sub-expiry-days"></div>
+                  <div class="sub-expiry-time-grid">
+                    <div class="sub-expiry-stepper">
+                      <span>小时</span>
+                      <div class="sub-expiry-stepper-controls">
+                        <button type="button" class="sub-expiry-stepper-btn" data-expiry-adjust="hour:-1" aria-label="小时减一">−</button>
+                        <strong id="sub-expiry-hour" class="sub-expiry-stepper-value">00</strong>
+                        <button type="button" class="sub-expiry-stepper-btn" data-expiry-adjust="hour:1" aria-label="小时加一">+</button>
+                      </div>
+                    </div>
+                    <div class="sub-expiry-stepper">
+                      <span>分钟</span>
+                      <div class="sub-expiry-stepper-controls">
+                        <button type="button" class="sub-expiry-stepper-btn" data-expiry-adjust="minute:-5" aria-label="分钟减五">−</button>
+                        <strong id="sub-expiry-minute" class="sub-expiry-stepper-value">00</strong>
+                        <button type="button" class="sub-expiry-stepper-btn" data-expiry-adjust="minute:5" aria-label="分钟加五">+</button>
+                      </div>
+                      <div class="sub-expiry-minute-presets">
+                        <button type="button" class="sub-expiry-minute-btn" data-expiry-minute="0">00</button>
+                        <button type="button" class="sub-expiry-minute-btn" data-expiry-minute="15">15</button>
+                        <button type="button" class="sub-expiry-minute-btn" data-expiry-minute="30">30</button>
+                        <button type="button" class="sub-expiry-minute-btn" data-expiry-minute="45">45</button>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="sub-expiry-popover-actions">
+                    <button type="button" class="ghost-btn" id="sub-expiry-cancel">取消</button>
+                    <button type="button" id="sub-expiry-apply">应用时间</button>
+                  </div>
+                </section>
+              </div>
+            </div>
+          </div>
+          <p id="sub-expiry-hint" class="sub-expiry-hint">当前设置：永久有效</p>
+        </section>
         <pre id="sub-result" class="result">请先勾选服务器后生成访问地址...</pre>
         <p class="sub-manage-jump">已保存订阅请前往 <a href="{{ url_for('subscriptions_page') }}">订阅管理页面</a> 查看和维护。</p>
       </section>

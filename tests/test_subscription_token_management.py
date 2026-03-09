@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import datetime
 import json
 import os
 import tempfile
@@ -36,7 +37,7 @@ class SubscriptionTokenManagementTests(unittest.TestCase):
 
     def write_config(
         self,
-        subscriptions: dict[str, list[str]],
+        subscriptions: dict[str, object],
         auth: dict[str, str] | None = None,
         sms_login: dict | None = None,
     ) -> None:
@@ -109,6 +110,9 @@ class SubscriptionTokenManagementTests(unittest.TestCase):
         self.assertEqual(item["server_ids"], ["hk-main", "sg-main"])
         self.assertEqual(item["server_names"], ["Hong Kong Main", "Singapore Main"])
         self.assertEqual(item["missing_server_ids"], [])
+        self.assertIsNone(item["expires_at"])
+        self.assertFalse(item["expired"])
+        self.assertEqual(item["expiry_state"], "permanent")
         self.assertTrue(item["url"].endswith("/sub/teamA"))
 
     def test_generate_with_existing_token_sets_overwritten(self) -> None:
@@ -125,7 +129,39 @@ class SubscriptionTokenManagementTests(unittest.TestCase):
         self.assertEqual(body["server_ids"], ["sg-main"])
 
         cfg = self.read_config()
-        self.assertEqual(cfg["subscriptions"]["teamA"], ["sg-main"])
+        self.assertEqual(
+            cfg["subscriptions"]["teamA"],
+            {"server_ids": ["sg-main"], "expires_at": None},
+        )
+
+    def test_generate_subscription_with_expiry(self) -> None:
+        expires_at = "2026-03-10T04:00:00Z"
+        resp = self.client.post(
+            "/api/subscription-link",
+            json={"server_ids": ["hk-main"], "token": "expiring", "expires_at": expires_at},
+        )
+        self.assertEqual(resp.status_code, 200)
+        body = resp.get_json()
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["expires_at"], expires_at)
+        self.assertFalse(body["expired"])
+        self.assertEqual(body["expiry_state"], "active")
+
+        cfg = self.read_config()
+        self.assertEqual(
+            cfg["subscriptions"]["expiring"],
+            {"server_ids": ["hk-main"], "expires_at": expires_at},
+        )
+
+    def test_generate_rejects_past_expiry(self) -> None:
+        resp = self.client.post(
+            "/api/subscription-link",
+            json={"server_ids": ["hk-main"], "token": "expired", "expires_at": "2020-01-01T00:00:00Z"},
+        )
+        self.assertEqual(resp.status_code, 400)
+        body = resp.get_json()
+        self.assertFalse(body["ok"])
+        self.assertIn("有效期", body["message"])
 
     def test_delete_subscription_success(self) -> None:
         self.write_config(subscriptions={"to-delete": ["hk-main", "sg-main"]})
@@ -163,6 +199,29 @@ class SubscriptionTokenManagementTests(unittest.TestCase):
         self.assertEqual(item["server_names"], ["Hong Kong Main"])
         self.assertEqual(item["missing_server_ids"], ["gone-server"])
 
+    def test_list_subscriptions_reports_expiry_state(self) -> None:
+        self.write_config(
+            subscriptions={
+                "permanent": ["hk-main"],
+                "active": {"server_ids": ["sg-main"], "expires_at": "2026-03-10T12:00:00Z"},
+                "expired": {"server_ids": ["hk-main"], "expires_at": "2026-03-08T12:00:00Z"},
+            }
+        )
+        now = datetime.datetime(2026, 3, 9, 12, 0, tzinfo=datetime.timezone.utc)
+        with patch.object(app_module, "utc_now", return_value=now):
+            resp = self.client.get("/api/subscriptions")
+
+        self.assertEqual(resp.status_code, 200)
+        body = resp.get_json()
+        self.assertTrue(body["ok"])
+        items = {item["token"]: item for item in body["subscriptions"]}
+        self.assertEqual(items["permanent"]["expiry_state"], "permanent")
+        self.assertFalse(items["permanent"]["expired"])
+        self.assertEqual(items["active"]["expiry_state"], "active")
+        self.assertFalse(items["active"]["expired"])
+        self.assertEqual(items["expired"]["expiry_state"], "expired")
+        self.assertTrue(items["expired"]["expired"])
+
     def test_generate_rejects_invalid_token(self) -> None:
         resp = self.client.post(
             "/api/subscription-link",
@@ -195,6 +254,18 @@ class SubscriptionTokenManagementTests(unittest.TestCase):
         lines = [line for line in decoded.splitlines() if line.strip()]
         self.assertEqual(len(lines), 2)
         self.assertTrue(all(line.startswith("trojan://") for line in lines))
+
+    def test_subscription_content_returns_gone_when_expired(self) -> None:
+        self.write_config(
+            subscriptions={
+                "bundle": {"server_ids": ["hk-main"], "expires_at": "2026-03-08T12:00:00Z"}
+            }
+        )
+        now = datetime.datetime(2026, 3, 9, 12, 0, tzinfo=datetime.timezone.utc)
+        with patch.object(app_module, "utc_now", return_value=now):
+            sub_resp = self.client.get("/sub/bundle")
+        self.assertEqual(sub_resp.status_code, 410)
+        self.assertIn("expired", sub_resp.get_data(as_text=True))
 
     def test_api_requires_login_when_auth_enabled(self) -> None:
         self.write_config(
@@ -346,6 +417,15 @@ class SubscriptionTokenManagementTests(unittest.TestCase):
         html = resp.get_data(as_text=True)
         self.assertIn("sub-manager-token-list", html)
         self.assertIn("sub-manager-refresh-btn", html)
+
+    def test_index_page_renders_subscription_expiry_controls(self) -> None:
+        resp = self.client.get("/")
+        self.assertEqual(resp.status_code, 200)
+        html = resp.get_data(as_text=True)
+        self.assertIn("sub-expiry-input", html)
+        self.assertIn("订阅有效期", html)
+        self.assertIn('id="sub-expiry-custom"', html)
+        self.assertIn("sub-expiry-minute-btn", html)
 
     def test_subscriptions_page_redirects_to_login_when_auth_enabled(self) -> None:
         self.write_config(
