@@ -1426,7 +1426,12 @@ def list_subscriptions():
         server_name_by_id[server_id] = name
 
     out: list[dict[str, Any]] = []
-    for token in sorted(subscriptions.keys()):
+    current_time = utc_now()
+    ordered_tokens = sorted(
+        subscriptions.keys(),
+        key=lambda token: (is_subscription_expired(subscriptions[token], now=current_time), token),
+    )
+    for token in ordered_tokens:
         subscription = subscriptions[token]
         sub_url = request.host_url.rstrip("/") + url_for("subscription_content", token=token)
         out.append(clean_subscription_view(token, subscription, server_name_by_id, sub_url))

@@ -978,35 +978,45 @@ body.has-modal-open {
   font-family: "IBM Plex Mono", "SF Mono", "Consolas", monospace;
 }
 
-.sub-expiry-minute-presets {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+.sub-expiry-select-wrap {
+  position: relative;
 }
 
-.sub-expiry-minute-btn {
-  min-height: 30px;
-  padding: 4px 10px;
-  border-radius: 999px;
-  border: 1px solid rgba(14, 143, 138, 0.24);
-  background: rgba(14, 143, 138, 0.08);
-  color: var(--accent-strong);
-  font-size: 0.78rem;
-  font-weight: 700;
+.sub-expiry-select-wrap::after {
+  content: "";
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  width: 9px;
+  height: 9px;
+  border-right: 2px solid #5f6f89;
+  border-bottom: 2px solid #5f6f89;
+  transform: translateY(-60%) rotate(45deg);
+  pointer-events: none;
+}
+
+.sub-expiry-select {
+  width: 100%;
+  min-height: 42px;
+  border-radius: 12px;
+  border: 1px solid var(--line-strong);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 244, 234, 0.92)),
+    #fff;
+  color: var(--ink);
+  padding: 9px 36px 9px 11px;
+  font-size: 0.95rem;
+  font-family: "IBM Plex Mono", "SF Mono", "Consolas", monospace;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
   cursor: pointer;
-  transition: transform 120ms ease, border-color 120ms ease, background 120ms ease;
 }
 
-.sub-expiry-minute-btn:hover {
-  transform: translateY(-1px);
-  border-color: rgba(14, 143, 138, 0.4);
-  background: rgba(14, 143, 138, 0.14);
-}
-
-.sub-expiry-minute-btn.is-active {
-  border-color: #2a6286;
-  background: linear-gradient(135deg, #d9ecff, #e4f5ff);
-  color: #173650;
+.sub-expiry-select:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(14, 143, 138, 0.16);
 }
 
 .sub-expiry-popover-actions {

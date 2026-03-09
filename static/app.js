@@ -240,6 +240,21 @@ function formatSubscriptionExpiry(expiresAt, expired) {
   return expired ? `已过期：${display}` : `截止时间：${display}`;
 }
 
+function sortSubscriptionsForDisplay(items) {
+  if (!Array.isArray(items)) return [];
+  return items
+    .map((item, index) => ({ item, index }))
+    .sort((left, right) => {
+      const leftExpired = Boolean(left.item && left.item.expired);
+      const rightExpired = Boolean(right.item && right.item.expired);
+      if (leftExpired !== rightExpired) {
+        return leftExpired ? 1 : -1;
+      }
+      return left.index - right.index;
+    })
+    .map((entry) => entry.item);
+}
+
 function markResult(resultEl, ok, text) {
   resultEl.classList.remove("ok", "err");
   if (ok === true) resultEl.classList.add("ok");
@@ -636,7 +651,6 @@ function initSubscriptionPanel() {
   const expiryHourEl = document.querySelector("#sub-expiry-hour");
   const expiryMinuteEl = document.querySelector("#sub-expiry-minute");
   const expiryAdjustButtons = Array.from(document.querySelectorAll(".sub-expiry-stepper-btn"));
-  const expiryMinutePresetButtons = Array.from(document.querySelectorAll(".sub-expiry-minute-btn"));
   const expiryApplyBtn = document.querySelector("#sub-expiry-apply");
   const expiryCancelBtn = document.querySelector("#sub-expiry-cancel");
   const expiryNavButtons = Array.from(document.querySelectorAll(".sub-expiry-nav"));
@@ -722,10 +736,17 @@ function initSubscriptionPanel() {
   const syncPickerTimeInputs = () => {
     if (!pickerDraftDate || !expiryHourEl || !expiryMinuteEl) return;
     expiryHourEl.textContent = String(pickerDraftDate.getHours()).padStart(2, "0");
-    expiryMinuteEl.textContent = String(pickerDraftDate.getMinutes()).padStart(2, "0");
-    for (const button of expiryMinutePresetButtons) {
-      const minute = Number(button.dataset.expiryMinute || "-1");
-      button.classList.toggle("is-active", minute === pickerDraftDate.getMinutes());
+    expiryMinuteEl.value = String(pickerDraftDate.getMinutes());
+  };
+
+  const fillMinuteOptions = () => {
+    if (!expiryMinuteEl) return;
+    expiryMinuteEl.innerHTML = "";
+    for (let minute = 0; minute < 60; minute += 1) {
+      const option = document.createElement("option");
+      option.value = String(minute);
+      option.textContent = String(minute).padStart(2, "0");
+      expiryMinuteEl.appendChild(option);
     }
   };
 
@@ -858,17 +879,16 @@ function initSubscriptionPanel() {
       if (!unit || !Number.isFinite(delta)) return;
       if (unit === "hour") {
         pickerDraftDate.setHours(pickerDraftDate.getHours() + delta);
-      } else if (unit === "minute") {
-        pickerDraftDate.setMinutes(pickerDraftDate.getMinutes() + delta);
       }
       syncPickerTimeInputs();
       renderPickerCalendar();
     });
   }
-  for (const minuteButton of expiryMinutePresetButtons) {
-    minuteButton.addEventListener("click", () => {
+  fillMinuteOptions();
+  if (expiryMinuteEl) {
+    expiryMinuteEl.addEventListener("change", () => {
       if (!pickerDraftDate) return;
-      const minute = Number(minuteButton.dataset.expiryMinute || "-1");
+      const minute = Number(expiryMinuteEl.value);
       if (!Number.isInteger(minute) || minute < 0 || minute > 59) return;
       pickerDraftDate.setMinutes(minute);
       syncPickerTimeInputs();
@@ -1017,12 +1037,13 @@ function initSubscriptionManagerPage() {
 
   const renderList = (items) => {
     tokenListEl.innerHTML = "";
-    if (!Array.isArray(items) || !items.length) {
+    const orderedItems = sortSubscriptionsForDisplay(items);
+    if (!orderedItems.length) {
       setListText("暂无已保存订阅。");
       return;
     }
 
-    for (const item of items) {
+    for (const item of orderedItems) {
       const token = typeof item.token === "string" ? item.token : "";
       if (!token) continue;
       const expired = Boolean(item.expired);

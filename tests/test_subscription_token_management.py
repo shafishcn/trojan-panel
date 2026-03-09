@@ -222,6 +222,23 @@ class SubscriptionTokenManagementTests(unittest.TestCase):
         self.assertEqual(items["expired"]["expiry_state"], "expired")
         self.assertTrue(items["expired"]["expired"])
 
+    def test_subscriptions_page_lists_expired_items_last(self) -> None:
+        self.write_config(
+            subscriptions={
+                "alpha": {"server_ids": ["hk-main"], "expires_at": "2026-03-10T12:00:00Z"},
+                "expired": {"server_ids": ["sg-main"], "expires_at": "2026-03-08T12:00:00Z"},
+                "permanent": ["hk-main"],
+            }
+        )
+        now = datetime.datetime(2026, 3, 9, 12, 0, tzinfo=datetime.timezone.utc)
+        with patch.object(app_module, "utc_now", return_value=now):
+            resp = self.client.get("/api/subscriptions")
+
+        self.assertEqual(resp.status_code, 200)
+        body = resp.get_json()
+        ordered = [item["token"] for item in body["subscriptions"]]
+        self.assertEqual(ordered, ["alpha", "permanent", "expired"])
+
     def test_generate_rejects_invalid_token(self) -> None:
         resp = self.client.post(
             "/api/subscription-link",
@@ -425,7 +442,7 @@ class SubscriptionTokenManagementTests(unittest.TestCase):
         self.assertIn("sub-expiry-input", html)
         self.assertIn("订阅有效期", html)
         self.assertIn('id="sub-expiry-custom"', html)
-        self.assertIn("sub-expiry-minute-btn", html)
+        self.assertIn('id="sub-expiry-minute"', html)
 
     def test_subscriptions_page_redirects_to_login_when_auth_enabled(self) -> None:
         self.write_config(
