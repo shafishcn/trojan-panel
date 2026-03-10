@@ -742,6 +742,8 @@ class SubscriptionTokenManagementTests(unittest.TestCase):
         self.assertIn("订阅有效期", html)
         self.assertIn('id="sub-expiry-custom"', html)
         self.assertIn('id="sub-expiry-minute"', html)
+        self.assertIn('id="sub-expiry-manual-toggle"', html)
+        self.assertIn('id="sub-expiry-manual-input"', html)
         self.assertIn("流量监控", html)
         self.assertIn("刷新流量", html)
         self.assertIn("server-result-summary", html)

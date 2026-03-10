@@ -321,6 +321,41 @@ function buildLocalDate(year, monthIndex, day, hour, minute) {
   return new Date(year, monthIndex, day, hour, minute, 0, 0);
 }
 
+function parseManualDateTimeInput(rawValue) {
+  const text = String(rawValue || "").trim();
+  if (!text) return null;
+  const matched = text.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:\s+|T)(\d{1,2}):(\d{2})$/);
+  if (!matched) return null;
+  const year = Number(matched[1]);
+  const month = Number(matched[2]);
+  const day = Number(matched[3]);
+  const hour = Number(matched[4]);
+  const minute = Number(matched[5]);
+  if (
+    !Number.isInteger(year)
+    || !Number.isInteger(month)
+    || !Number.isInteger(day)
+    || !Number.isInteger(hour)
+    || !Number.isInteger(minute)
+  ) {
+    return null;
+  }
+  if (month < 1 || month > 12 || day < 1 || day > 31 || hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+    return null;
+  }
+  const date = buildLocalDate(year, month - 1, day, hour, minute);
+  if (
+    date.getFullYear() !== year
+    || date.getMonth() !== month - 1
+    || date.getDate() !== day
+    || date.getHours() !== hour
+    || date.getMinutes() !== minute
+  ) {
+    return null;
+  }
+  return date;
+}
+
 function isSameCalendarDay(a, b) {
   const left = parseDateValue(a);
   const right = parseDateValue(b);
@@ -900,17 +935,6 @@ function parseInitialAuth() {
 
 const initialAuth = parseInitialAuth();
 
-function buildAutoServerId(listEl) {
-  const used = new Set(
-    Array.from(listEl.querySelectorAll('input[data-field="id"]'))
-      .map((el) => (el instanceof HTMLInputElement ? el.value.trim() : ""))
-      .filter((x) => Boolean(x)),
-  );
-  let idx = 1;
-  while (used.has(`srv-${idx}`)) idx += 1;
-  return `srv-${idx}`;
-}
-
 function createEditorItem(server, templateEl) {
   const fragment = templateEl.content.cloneNode(true);
   const item = fragment.querySelector(".editor-item");
@@ -986,12 +1010,6 @@ function createEditorItem(server, templateEl) {
   if (fields.description) fields.description.value = server.description || "";
 
   syncDerivedCommands();
-
-  const removeBtn = item.querySelector(".remove-server-btn");
-  if (removeBtn) {
-    removeBtn.hidden = true;
-    removeBtn.disabled = true;
-  }
   return item;
 }
 
@@ -1021,12 +1039,11 @@ function collectServerEditors(listEl) {
 function initConfigEditor() {
   const listEl = document.querySelector("#editor-list");
   const templateEl = document.querySelector("#server-editor-template");
-  const addBtn = document.querySelector("#add-server-btn");
   const saveBtn = document.querySelector("#save-servers-btn");
   const resultEl = document.querySelector("#config-result");
   const authUsernameEl = document.querySelector("#auth-username");
   const authPasswordEl = document.querySelector("#auth-password");
-  if (!listEl || !templateEl || !addBtn || !saveBtn || !resultEl) return;
+  if (!listEl || !templateEl || !saveBtn || !resultEl) return;
 
   const initial = initialServers.length
     ? initialServers
@@ -1051,27 +1068,6 @@ function initConfigEditor() {
 
   if (authUsernameEl) authUsernameEl.value = initialAuth.username || "";
   if (authPasswordEl) authPasswordEl.value = initialAuth.password || "";
-
-  addBtn.addEventListener("click", () => {
-    const autoId = buildAutoServerId(listEl);
-    const node = createEditorItem(
-      {
-        id: autoId,
-        name: "",
-        command_template: "",
-        status_command_template: "",
-        current_port: "",
-        addr: "",
-        trojan_password: "",
-        traffic_quota: "",
-        vnstat_interface: "",
-        traffic_cycle_day: "",
-        description: "",
-      },
-      templateEl,
-    );
-    if (node) listEl.appendChild(node);
-  });
 
   saveBtn.addEventListener("click", async () => {
     const servers = collectServerEditors(listEl);
@@ -1155,7 +1151,15 @@ function initSubscriptionPanel() {
   const expiryMonthLabel = document.querySelector("#sub-expiry-month-label");
   const expiryDaysEl = document.querySelector("#sub-expiry-days");
   const expiryHourEl = document.querySelector("#sub-expiry-hour");
-  const expiryMinuteEl = document.querySelector("#sub-expiry-minute");
+  const expiryMinuteTrigger = document.querySelector("#sub-expiry-minute");
+  const expiryMinuteWrap = document.querySelector("#sub-expiry-minute-wrap");
+  const expiryMinutePanel = document.querySelector("#sub-expiry-minute-panel");
+  const expiryMinuteOptionsEl = document.querySelector("#sub-expiry-minute-options");
+  const expiryManualToggle = document.querySelector("#sub-expiry-manual-toggle");
+  const expiryManualEditor = document.querySelector("#sub-expiry-manual-editor");
+  const expiryManualInput = document.querySelector("#sub-expiry-manual-input");
+  const expiryManualFillBtn = document.querySelector("#sub-expiry-manual-fill");
+  const expiryManualFeedback = document.querySelector("#sub-expiry-manual-feedback");
   const expiryAdjustButtons = Array.from(document.querySelectorAll(".sub-expiry-stepper-btn"));
   const expiryApplyBtn = document.querySelector("#sub-expiry-apply");
   const expiryCancelBtn = document.querySelector("#sub-expiry-cancel");
@@ -1170,6 +1174,30 @@ function initSubscriptionPanel() {
   let pickerDraftDate = null;
   let pickerViewDate = roundUpToNextMinute();
   let removePickerOutsideListener = null;
+
+  const setManualFeedback = (message, ok = false) => {
+    if (!expiryManualFeedback) return;
+    expiryManualFeedback.textContent = message;
+    expiryManualFeedback.classList.toggle("is-success", ok);
+    expiryManualFeedback.classList.toggle("is-error", !ok && Boolean(message) && !message.startsWith("支持格式"));
+  };
+
+  const syncManualInput = () => {
+    if (!expiryManualInput) return;
+    const sourceDate = pickerDraftDate || getActiveExpiryDate();
+    expiryManualInput.value = sourceDate ? formatDateTimeDisplay(sourceDate) : "";
+  };
+
+  const setManualEditorOpen = (open) => {
+    if (!expiryManualEditor || !expiryManualToggle) return;
+    expiryManualEditor.hidden = !open;
+    expiryManualToggle.setAttribute("aria-expanded", open ? "true" : "false");
+    expiryManualToggle.textContent = open ? "收起编辑" : "点击编辑";
+    if (open) {
+      syncManualInput();
+      setManualFeedback("支持格式：YYYY-MM-DD HH:mm");
+    }
+  };
 
   const getPresetDays = () => {
     if (expiryMode === "1d") return 1;
@@ -1240,19 +1268,64 @@ function initSubscriptionPanel() {
   };
 
   const syncPickerTimeInputs = () => {
-    if (!pickerDraftDate || !expiryHourEl || !expiryMinuteEl) return;
+    if (!pickerDraftDate || !expiryHourEl || !expiryMinuteTrigger) return;
     expiryHourEl.textContent = String(pickerDraftDate.getHours()).padStart(2, "0");
-    expiryMinuteEl.value = String(pickerDraftDate.getMinutes());
+    expiryMinuteTrigger.textContent = String(pickerDraftDate.getMinutes()).padStart(2, "0");
+    syncManualInput();
   };
 
-  const fillMinuteOptions = () => {
-    if (!expiryMinuteEl) return;
-    expiryMinuteEl.innerHTML = "";
+  const renderMinuteOptions = () => {
+    if (!expiryMinuteOptionsEl) return;
+    expiryMinuteOptionsEl.innerHTML = "";
+    const activeDate = pickerDraftDate || getActiveExpiryDate();
+    const activeMinute = activeDate ? activeDate.getMinutes() : 0;
+    const applyMinuteSelection = (minute) => {
+      const baseDate = pickerDraftDate ? cloneDate(pickerDraftDate) : getActiveExpiryDate();
+      if (!baseDate) return;
+      baseDate.setMinutes(minute);
+      pickerDraftDate = baseDate;
+      syncPickerTimeInputs();
+      renderMinuteOptions();
+      renderPickerCalendar();
+      closeMinutePanel();
+    };
     for (let minute = 0; minute < 60; minute += 1) {
-      const option = document.createElement("option");
-      option.value = String(minute);
+      const option = document.createElement("div");
+      option.className = "sub-expiry-minute-option";
       option.textContent = String(minute).padStart(2, "0");
-      expiryMinuteEl.appendChild(option);
+      option.dataset.minuteValue = String(minute);
+      option.setAttribute("role", "option");
+      option.tabIndex = 0;
+      option.setAttribute("aria-selected", minute === activeMinute ? "true" : "false");
+      if (minute === activeMinute) option.classList.add("is-selected");
+      option.addEventListener("click", () => applyMinuteSelection(minute));
+      option.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        applyMinuteSelection(minute);
+      });
+      expiryMinuteOptionsEl.appendChild(option);
+    }
+  };
+
+  const closeMinutePanel = () => {
+    if (!expiryMinutePanel || !expiryMinuteTrigger || !expiryMinuteWrap) return;
+    expiryMinutePanel.hidden = true;
+    expiryMinuteTrigger.setAttribute("aria-expanded", "false");
+    expiryMinuteWrap.classList.remove("is-open");
+  };
+
+  const openMinutePanel = () => {
+    if (!expiryMinutePanel || !expiryMinuteTrigger || !expiryMinuteWrap) return;
+    renderMinuteOptions();
+    expiryMinutePanel.hidden = false;
+    expiryMinuteTrigger.setAttribute("aria-expanded", "true");
+    expiryMinuteWrap.classList.add("is-open");
+    const selectedOption = expiryMinuteOptionsEl
+      ? expiryMinuteOptionsEl.querySelector(".sub-expiry-minute-option.is-selected")
+      : null;
+    if (selectedOption instanceof HTMLElement) {
+      selectedOption.scrollIntoView({ block: "nearest" });
     }
   };
 
@@ -1265,47 +1338,60 @@ function initSubscriptionPanel() {
     const weekdayOffset = (firstOfMonth.getDay() + 6) % 7;
     const gridStart = buildLocalDate(pickerViewDate.getFullYear(), pickerViewDate.getMonth(), 1 - weekdayOffset, 0, 0);
     const minSelectableDate = roundUpToNextMinute();
+    const applyDaySelection = (dayDate) => {
+      const current = pickerDraftDate || getActiveExpiryDate();
+      pickerDraftDate = buildLocalDate(
+        dayDate.getFullYear(),
+        dayDate.getMonth(),
+        dayDate.getDate(),
+        current.getHours(),
+        current.getMinutes(),
+      );
+      syncPickerTimeInputs();
+      renderMinuteOptions();
+      renderPickerCalendar();
+    };
 
     for (let index = 0; index < 42; index += 1) {
       const dayDate = addDays(gridStart, index);
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "sub-expiry-day";
-      button.textContent = String(dayDate.getDate());
-      button.dataset.dayValue = toDateTimeLocalValue(dayDate);
+      const dayCell = document.createElement("div");
+      dayCell.className = "sub-expiry-day";
+      dayCell.textContent = String(dayDate.getDate());
+      dayCell.dataset.dayValue = toDateTimeLocalValue(dayDate);
+      dayCell.setAttribute("role", "button");
+      dayCell.tabIndex = 0;
 
       if (!isSameCalendarMonth(dayDate, pickerViewDate)) {
-        button.classList.add("is-outside");
+        dayCell.classList.add("is-outside");
       }
       if (pickerDraftDate && isSameCalendarDay(dayDate, pickerDraftDate)) {
-        button.classList.add("is-selected");
+        dayCell.classList.add("is-selected");
       }
       if (isSameCalendarDay(dayDate, new Date())) {
-        button.classList.add("is-today");
+        dayCell.classList.add("is-today");
       }
 
       const dayEnd = buildLocalDate(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate(), 23, 59);
       if (dayEnd.getTime() <= minSelectableDate.getTime()) {
-        button.disabled = true;
+        dayCell.classList.add("is-disabled");
+        dayCell.tabIndex = -1;
+        dayCell.setAttribute("aria-disabled", "true");
+      } else {
+        dayCell.addEventListener("click", () => applyDaySelection(dayDate));
+        dayCell.addEventListener("keydown", (event) => {
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
+          applyDaySelection(dayDate);
+        });
       }
-      button.addEventListener("click", () => {
-        const current = pickerDraftDate || getActiveExpiryDate();
-        pickerDraftDate = buildLocalDate(
-          dayDate.getFullYear(),
-          dayDate.getMonth(),
-          dayDate.getDate(),
-          current.getHours(),
-          current.getMinutes(),
-        );
-        syncPickerTimeInputs();
-        renderPickerCalendar();
-      });
-      expiryDaysEl.appendChild(button);
+      expiryDaysEl.appendChild(dayCell);
     }
   };
 
   const closePicker = () => {
     if (!expiryPopover || !expiryTrigger) return;
+    closeMinutePanel();
+    setManualEditorOpen(false);
     expiryPopover.hidden = true;
     expiryTrigger.setAttribute("aria-expanded", "false");
     if (typeof removePickerOutsideListener === "function") {
@@ -1321,12 +1407,21 @@ function initSubscriptionPanel() {
     pickerViewDate = buildLocalDate(pickerDraftDate.getFullYear(), pickerDraftDate.getMonth(), 1, 0, 0);
     syncPickerTimeInputs();
     renderPickerCalendar();
+    setManualEditorOpen(false);
     expiryPopover.hidden = false;
     expiryTrigger.setAttribute("aria-expanded", "true");
     if (typeof removePickerOutsideListener === "function") removePickerOutsideListener();
     const onDocumentClick = (event) => {
       const target = event.target;
       if (!(target instanceof Element)) return;
+      if (
+        expiryMinutePanel
+        && !expiryMinutePanel.hidden
+        && expiryMinuteWrap
+        && !expiryMinuteWrap.contains(target)
+      ) {
+        closeMinutePanel();
+      }
       if (expiryPopover.contains(target) || expiryTrigger.contains(target)) return;
       closePicker();
     };
@@ -1368,6 +1463,28 @@ function initSubscriptionPanel() {
     return { value: new Date(Date.now() + presetDays * 86400000).toISOString(), error: "" };
   };
 
+  const applyManualInputToDraft = () => {
+    if (!expiryManualInput) return false;
+    const parsed = parseManualDateTimeInput(expiryManualInput.value);
+    if (!parsed) {
+      setManualFeedback("时间格式无效，请使用 YYYY-MM-DD HH:mm。");
+      expiryManualInput.focus();
+      return false;
+    }
+    if (parsed.getTime() <= Date.now()) {
+      setManualFeedback("手动输入的有效期必须晚于当前时间。");
+      expiryManualInput.focus();
+      return false;
+    }
+    pickerDraftDate = parsed;
+    pickerViewDate = buildLocalDate(parsed.getFullYear(), parsed.getMonth(), 1, 0, 0);
+    syncPickerTimeInputs();
+    renderMinuteOptions();
+    renderPickerCalendar();
+    setManualFeedback("已同步到时间组件。", true);
+    return true;
+  };
+
   for (const button of expiryPresetButtons) {
     button.addEventListener("click", () => {
       const mode = String(button.dataset.expiryMode || "").trim();
@@ -1390,15 +1507,40 @@ function initSubscriptionPanel() {
       renderPickerCalendar();
     });
   }
-  fillMinuteOptions();
-  if (expiryMinuteEl) {
-    expiryMinuteEl.addEventListener("change", () => {
-      if (!pickerDraftDate) return;
-      const minute = Number(expiryMinuteEl.value);
-      if (!Number.isInteger(minute) || minute < 0 || minute > 59) return;
-      pickerDraftDate.setMinutes(minute);
-      syncPickerTimeInputs();
-      renderPickerCalendar();
+  renderMinuteOptions();
+  if (expiryMinuteTrigger) {
+    expiryMinuteTrigger.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (expiryMinutePanel && !expiryMinutePanel.hidden) {
+        closeMinutePanel();
+      } else {
+        openMinutePanel();
+      }
+    });
+  }
+  if (expiryMinuteOptionsEl) {
+    expiryMinuteOptionsEl.addEventListener("click", (event) => {
+      event.stopPropagation();
+    });
+  }
+  if (expiryManualToggle) {
+    expiryManualToggle.addEventListener("click", () => {
+      const shouldOpen = !expiryManualEditor || expiryManualEditor.hidden;
+      setManualEditorOpen(shouldOpen);
+      if (shouldOpen && expiryManualInput) expiryManualInput.focus();
+    });
+  }
+  if (expiryManualFillBtn) {
+    expiryManualFillBtn.addEventListener("click", () => {
+      applyManualInputToDraft();
+    });
+  }
+  if (expiryManualInput) {
+    expiryManualInput.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      applyManualInputToDraft();
     });
   }
   for (const navButton of expiryNavButtons) {

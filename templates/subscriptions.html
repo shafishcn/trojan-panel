@@ -5,11 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Subscription Manager</title>
   <meta name="theme-color" content="#1d587a">
-  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='app-icon.svg') }}">
+  <link rel="icon" type="image/svg+xml" href="{{ asset_url('app-icon.svg') }}">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="stylesheet" href="{{ asset_url('style.css') }}">
 </head>
 <body>
   <div class="bg-shape shape-1"></div>
@@ -20,7 +20,7 @@
       <div class="topbar-main">
         <h1>
           <span class="brand-title">
-            <img class="brand-icon" src="{{ url_for('static', filename='app-icon.svg') }}" alt="" width="48" height="48" aria-hidden="true">
+            <img class="brand-icon" src="{{ asset_url('app-icon.svg') }}" alt="" width="48" height="48" aria-hidden="true">
             <span class="brand-title-text">订阅管理</span>
           </span>
         </h1>
@@ -61,6 +61,6 @@
     </section>
   </main>
 
-  <script src="{{ url_for('static', filename='app.js') }}"></script>
+  <script src="{{ asset_url('app.js') }}"></script>
 </body>
 </html>

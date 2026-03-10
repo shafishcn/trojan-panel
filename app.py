@@ -73,6 +73,16 @@ SMS_LOGIN_RUNTIME: dict[str, dict[str, Any]] = {}
 SMS_LOGIN_RUNTIME_LOCK = threading.Lock()
 
 
+@app.context_processor
+def inject_asset_helpers() -> dict[str, Any]:
+    def asset_url(filename: str) -> str:
+        static_path = BASE_DIR / "static" / filename
+        version = int(static_path.stat().st_mtime_ns) if static_path.exists() else int(time.time() * 1_000_000_000)
+        return url_for("static", filename=filename, v=version)
+
+    return {"asset_url": asset_url}
+
+
 def load_config(config_path: Path) -> dict[str, Any]:
     if not config_path.exists():
         return {"servers": [], "subscriptions": {}}

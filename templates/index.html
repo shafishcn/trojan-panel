@@ -5,11 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Trojan Port Manager</title>
   <meta name="theme-color" content="#1d587a">
-  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='app-icon.svg') }}">
+  <link rel="icon" type="image/svg+xml" href="{{ asset_url('app-icon.svg') }}">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="stylesheet" href="{{ asset_url('style.css') }}">
 </head>
 <body>
   <div class="bg-shape shape-1"></div>
@@ -20,7 +20,7 @@
       <div class="topbar-main">
         <h1>
           <span class="brand-title">
-            <img class="brand-icon" src="{{ url_for('static', filename='app-icon.svg') }}" alt="" width="48" height="48" aria-hidden="true">
+            <img class="brand-icon" src="{{ asset_url('app-icon.svg') }}" alt="" width="48" height="48" aria-hidden="true">
             <span class="brand-title-text">Trojan Port Manager</span>
           </span>
         </h1>
@@ -91,6 +91,22 @@
                     <strong id="sub-expiry-month-label" class="sub-expiry-month-label"></strong>
                     <button type="button" class="sub-expiry-nav" data-expiry-nav="1" aria-label="下个月">›</button>
                   </div>
+                  <div class="sub-expiry-manual-head">
+                    <span class="sub-expiry-manual-label">需要精确时间时，可直接手动输入</span>
+                    <button type="button" class="ghost-btn sub-expiry-manual-toggle" id="sub-expiry-manual-toggle" aria-expanded="false">
+                      点击编辑
+                    </button>
+                  </div>
+                  <div id="sub-expiry-manual-editor" class="sub-expiry-manual-editor" hidden>
+                    <label class="sub-expiry-manual-field" for="sub-expiry-manual-input">
+                      <span>手动输入</span>
+                      <input id="sub-expiry-manual-input" type="text" inputmode="text" placeholder="例如 2026-03-10 18:30">
+                    </label>
+                    <div class="sub-expiry-manual-actions">
+                      <button type="button" class="ghost-btn" id="sub-expiry-manual-fill">填入时间</button>
+                    </div>
+                    <p id="sub-expiry-manual-feedback" class="sub-expiry-manual-feedback" aria-live="polite">支持格式：YYYY-MM-DD HH:mm</p>
+                  </div>
                   <div class="sub-expiry-weekdays" aria-hidden="true">
                     <span>一</span>
                     <span>二</span>
@@ -112,8 +128,13 @@
                     </div>
                     <div class="sub-expiry-stepper">
                       <span>分钟</span>
-                      <div class="sub-expiry-select-wrap">
-                        <select id="sub-expiry-minute" class="sub-expiry-select" aria-label="分钟"></select>
+                      <div class="sub-expiry-minute-wrap" id="sub-expiry-minute-wrap">
+                        <button id="sub-expiry-minute" class="sub-expiry-minute-trigger" type="button" aria-haspopup="listbox" aria-expanded="false">
+                          00
+                        </button>
+                        <div id="sub-expiry-minute-panel" class="sub-expiry-minute-panel" hidden>
+                          <div id="sub-expiry-minute-options" class="sub-expiry-minute-options" role="listbox" aria-label="分钟"></div>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -236,6 +257,6 @@
   </main>
 
   <script id="initial-servers" type="application/json">{{ servers | tojson }}</script>
-  <script src="{{ url_for('static', filename='app.js') }}"></script>
+  <script src="{{ asset_url('app.js') }}"></script>
 </body>
 </html>

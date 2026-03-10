@@ -5,11 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Server Manager</title>
   <meta name="theme-color" content="#1d587a">
-  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='app-icon.svg') }}">
+  <link rel="icon" type="image/svg+xml" href="{{ asset_url('app-icon.svg') }}">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="stylesheet" href="{{ asset_url('style.css') }}">
 </head>
 <body>
   <div class="bg-shape shape-1"></div>
@@ -20,7 +20,7 @@
       <div class="topbar-main">
         <h1>
           <span class="brand-title">
-            <img class="brand-icon" src="{{ url_for('static', filename='app-icon.svg') }}" alt="" width="48" height="48" aria-hidden="true">
+            <img class="brand-icon" src="{{ asset_url('app-icon.svg') }}" alt="" width="48" height="48" aria-hidden="true">
             <span class="brand-title-text">服务器管理</span>
           </span>
         </h1>
@@ -50,7 +50,6 @@
           <p>支持命令模板：<code>ssh xxx trojan port $1</code></p>
         </div>
         <div class="config-actions">
-          <button id="add-server-btn" type="button" class="ghost-btn" hidden>新增服务器</button>
           <button id="save-servers-btn" type="button">保存配置</button>
         </div>
       </div>
@@ -121,14 +120,11 @@
           <input data-field="description" type="text" placeholder="可选">
         </label>
       </div>
-      <div class="editor-foot">
-        <button type="button" class="danger-btn remove-server-btn" hidden aria-hidden="true">删除</button>
-      </div>
     </article>
   </template>
 
   <script id="initial-servers" type="application/json">{{ servers | tojson }}</script>
   <script id="initial-auth" type="application/json">{{ auth | tojson }}</script>
-  <script src="{{ url_for('static', filename='app.js') }}"></script>
+  <script src="{{ asset_url('app.js') }}"></script>
 </body>
 </html>
