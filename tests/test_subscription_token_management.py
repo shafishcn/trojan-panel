@@ -747,6 +747,7 @@ class SubscriptionTokenManagementTests(unittest.TestCase):
         self.assertIn("server-result-summary", html)
         self.assertIn("server-result-detail", html)
         self.assertNotIn("当前周期:", html)
+        self.assertIn("app-icon.svg", html)
 
     def test_subscriptions_page_redirects_to_login_when_auth_enabled(self) -> None:
         self.write_config(

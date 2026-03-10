@@ -4,6 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>登录 - Trojan Port Manager</title>
+  <meta name="theme-color" content="#1d587a">
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='app-icon.svg') }}">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -16,7 +18,12 @@
   <main class="login-shell">
     <section class="panel login-panel">
       {% set active_mode = "sms" if sms_login_enabled and login_type == "sms" else "password" %}
-      <h1 class="login-title">Trojan 管理端登录</h1>
+      <h1 class="login-title">
+        <span class="brand-title brand-title-login">
+          <img class="brand-icon brand-icon-login" src="{{ url_for('static', filename='app-icon.svg') }}" alt="" width="44" height="44" aria-hidden="true">
+          <span class="brand-title-text">Trojan 管理端登录</span>
+        </span>
+      </h1>
       <div class="login-main">
         {% if error %}
           <p class="login-error">{{ error }}</p>
