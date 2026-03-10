@@ -21,7 +21,7 @@
 在项目目录执行：
 
 ```bash
-cd /Users/shafish/Project/Python/tj
+cd /path/to/trojan-panel
 uv venv .venv
 uv pip install --python .venv/bin/python -r requirements.txt
 ```
@@ -44,6 +44,8 @@ TROJAN_PANEL_HOST=127.0.0.1 TROJAN_PANEL_PORT=8000 .venv/bin/python app.py
 - 服务器管理页：[http://127.0.0.1:8000/servers](http://127.0.0.1:8000/servers)
 - 登录页：[http://127.0.0.1:8000/login](http://127.0.0.1:8000/login)
 
+说明：本文档中的账号、密码、手机号、域名、密钥、订阅密码等示例值均为占位符，请按你的实际环境替换。
+
 ## 4. 配置文件说明（servers.json）
 
 顶层结构：
@@ -51,18 +53,18 @@ TROJAN_PANEL_HOST=127.0.0.1 TROJAN_PANEL_PORT=8000 .venv/bin/python app.py
 ```json
 {
   "auth": {
-    "username": "admin",
-    "password": "change-me"
+    "username": "panel-admin",
+    "password": "replace-with-strong-password"
   },
   "sms_login": {
     "enabled": true,
     "allowed_phones": [
-      "13800138000"
+      "<allowed-phone-number>"
     ],
-    "access_key_id": "LTAIxxxxxxxx",
-    "access_key_secret": "xxxxxxxx",
-    "sign_name": "速通互联验证码",
-    "template_code": "100001",
+    "access_key_id": "your-access-key-id",
+    "access_key_secret": "your-access-key-secret",
+    "sign_name": "你的短信签名",
+    "template_code": "SMS_000000001",
     "template_param": "{\"code\":\"##code##\",\"min\":\"##min##\"}"
   },
   "subscriptions": {},
@@ -120,13 +122,13 @@ TROJAN_PANEL_HOST=127.0.0.1 TROJAN_PANEL_PORT=8000 .venv/bin/python app.py
       "id": "hk-main",
       "name": "Hong Kong Main",
       "description": "主节点",
-      "addr": "tj9.tffats.top",
+      "addr": "hk.example.net",
       "current_port": 443,
       "vnstat_interface": "eth0",
       "traffic_cycle_day": 1,
       "traffic_quota": "2048 GB",
-      "command_template": "ssh -i ~/.ssh/id_ed25519 root@203.0.113.10 trojan port $1",
-      "status_command_template": "ssh -i ~/.ssh/id_ed25519 root@203.0.113.10 trojan status"
+      "command_template": "ssh hk-main trojan port $1",
+      "status_command_template": "ssh hk-main trojan status"
     }
   ]
 }
@@ -217,7 +219,7 @@ trojan://<trojan_password>@<addr>:<current_port>?security=tls&headerType=none&ty
 示例：
 
 ```text
-trojan://tffats110@tj10.tffats.top:25092?security=tls&headerType=none&type=tcp#tj10
+trojan://example-password@node.example.net:443?security=tls&headerType=none&type=tcp#node-example
 ```
 
 注意：如果某台服务器未配置 `addr`、`current_port` 或 `trojan_password`，生成会失败并提示具体缺失字段。
@@ -278,7 +280,7 @@ After=network.target
 
 [Service]
 Type=simple
-User=ubuntu
+User=deploy
 WorkingDirectory=/opt/trojan-panel
 Environment=TROJAN_PANEL_CONFIG=/opt/trojan-panel/servers.json
 Environment=TROJAN_PANEL_SECRET_KEY=replace-with-a-long-random-string
