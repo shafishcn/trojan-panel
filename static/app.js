@@ -166,6 +166,109 @@ function showThemeConfirm(options) {
   return showThemeDialog(options);
 }
 
+function ensureOutputDialog() {
+  let root = document.querySelector("#theme-output-dialog");
+  if (root) {
+    return {
+      root,
+      backdrop: root.querySelector(".theme-dialog-backdrop"),
+      title: root.querySelector(".theme-output-title"),
+      summary: root.querySelector(".theme-output-summary"),
+      closeBtn: root.querySelector(".theme-output-close"),
+      body: root.querySelector(".theme-output-body"),
+    };
+  }
+
+  root = document.createElement("div");
+  root.id = "theme-output-dialog";
+  root.className = "theme-dialog theme-dialog-output";
+  root.setAttribute("aria-hidden", "true");
+  root.innerHTML = `
+    <div class="theme-dialog-backdrop"></div>
+    <section class="theme-dialog-card" role="dialog" aria-modal="true" aria-labelledby="theme-output-title" aria-describedby="theme-output-body">
+      <div class="theme-output-head">
+        <div class="theme-output-copy">
+          <h3 id="theme-output-title" class="theme-dialog-title theme-output-title"></h3>
+          <p class="theme-output-summary"></p>
+        </div>
+        <button type="button" class="theme-dialog-btn theme-output-close">关闭</button>
+      </div>
+      <pre id="theme-output-body" class="theme-output-body"></pre>
+    </section>
+  `;
+  document.body.appendChild(root);
+
+  return {
+    root,
+    backdrop: root.querySelector(".theme-dialog-backdrop"),
+    title: root.querySelector(".theme-output-title"),
+    summary: root.querySelector(".theme-output-summary"),
+    closeBtn: root.querySelector(".theme-output-close"),
+    body: root.querySelector(".theme-output-body"),
+  };
+}
+
+function showOutputDialog({
+  title = "运行详情",
+  summary = "",
+  details = "",
+  state = "idle",
+} = {}) {
+  const modal = ensureOutputDialog();
+  if (!modal.root || !modal.backdrop || !modal.title || !modal.summary || !modal.closeBtn || !modal.body) {
+    return Promise.resolve(false);
+  }
+
+  if (typeof closeActiveDialog === "function") closeActiveDialog(false);
+
+  modal.title.textContent = String(title || "运行详情");
+  modal.summary.textContent = String(summary || "");
+  modal.summary.classList.remove("is-ok", "is-err", "is-pending");
+  if (state === "ok") modal.summary.classList.add("is-ok");
+  else if (state === "err") modal.summary.classList.add("is-err");
+  else if (state === "pending") modal.summary.classList.add("is-pending");
+  modal.body.textContent = String(details || summary || "");
+
+  modal.root.classList.add("is-open");
+  modal.root.setAttribute("aria-hidden", "false");
+  document.body.classList.add("has-modal-open");
+
+  return new Promise((resolve) => {
+    let settled = false;
+
+    const cleanup = () => {
+      modal.backdrop.removeEventListener("click", onClose);
+      modal.closeBtn.removeEventListener("click", onClose);
+      document.removeEventListener("keydown", onKeydown);
+      modal.root.classList.remove("is-open");
+      modal.root.setAttribute("aria-hidden", "true");
+      document.body.classList.remove("has-modal-open");
+      closeActiveDialog = null;
+    };
+
+    const close = (ok) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(Boolean(ok));
+    };
+
+    const onClose = () => close(true);
+    const onKeydown = (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        close(true);
+      }
+    };
+
+    closeActiveDialog = close;
+    modal.backdrop.addEventListener("click", onClose);
+    modal.closeBtn.addEventListener("click", onClose);
+    document.addEventListener("keydown", onKeydown);
+    window.setTimeout(() => modal.closeBtn.focus(), 0);
+  });
+}
+
 function parseDateValue(rawValue) {
   if (!rawValue) return null;
   const date = rawValue instanceof Date ? rawValue : new Date(rawValue);
@@ -310,6 +413,208 @@ function formatTrafficSource(data) {
   return "数据源：vnstat / 自动选择网卡";
 }
 
+function translateServerMessage(rawText, fallback = "操作失败。") {
+  const text = String(rawText || "").trim();
+  if (!text) return fallback;
+  const lower = text.toLowerCase();
+
+  const exactMap = new Map([
+    ["ssh command timed out.", "SSH 命令执行超时。"],
+    ["port switched successfully.", "端口切换成功。"],
+    ["failed to switch port.", "切换端口失败。"],
+    ["status fetched.", "状态获取成功。"],
+    ["failed to fetch status.", "状态获取失败。"],
+    ["traffic usage fetched.", "流量已更新。"],
+    ["failed to fetch traffic usage.", "获取流量失败。"],
+    ["traffic usage fetched, but vnstat daily history may be incomplete for the current cycle.", "流量已更新，但当前周期数据可能尚未完整。"],
+    ["trojan service is running normally.", "Trojan 服务运行正常。"],
+    ["trojan service is not running normally.", "Trojan 服务未正常运行。"],
+    ["network is reachable.", "网络可访问。"],
+    ["network check failed.", "网络检测失败。"],
+    ["connection timed out.", "连接超时。"],
+    ["`addr` is not configured.", "未配置检测地址。"],
+    ["`current_port` is not configured.", "未配置当前端口。"],
+    ["`vnstat` has no daily traffic data yet.", "流量数据尚未生成。"],
+  ]);
+  if (exactMap.has(lower)) return exactMap.get(lower) || fallback;
+
+  if (text.startsWith("Port switched, but failed to save current_port:")) {
+    return "端口已切换，但保存当前端口失败。";
+  }
+  if (text.startsWith("Config error:")) {
+    return `配置错误：${text.slice("Config error:".length).trim() || "请检查配置。"}`
+  }
+  if (text.startsWith("request error:")) {
+    return `请求失败：${text.slice("request error:".length).trim() || "请稍后重试。"}`
+  }
+  if (text.startsWith("`vnstat` returned invalid JSON:")) {
+    return "流量数据格式异常。";
+  }
+  if (lower.includes("connection refused")) {
+    return "连接被拒绝。";
+  }
+  if (lower.includes("name or service not known") || lower.includes("nodename nor servname provided")) {
+    return "域名解析失败。";
+  }
+  if (lower.includes("no route to host")) {
+    return "无法路由到目标主机。";
+  }
+  if (lower.includes("network is unreachable")) {
+    return "网络不可达。";
+  }
+  if (lower.includes("timed out") || lower.includes("timeout")) {
+    return "连接超时。";
+  }
+
+  return fallback;
+}
+
+function summarizeNetworkStatus(data) {
+  if (!data || typeof data !== "object" || data.network_checked === undefined) return "";
+  if (data.network_checked === true) {
+    if (data.network_ok) return "网络可访问。";
+    return `网络不可访问：${translateServerMessage(data.network_message, "请检查目标地址或端口。")}`;
+  }
+  if (data.network_checked === false) {
+    return translateServerMessage(data.network_message, "网络检测条件不足。");
+  }
+  return "";
+}
+
+function summarizeTrafficStatus(data) {
+  if (!data || typeof data !== "object") return "";
+  const hasTrafficContext = Boolean(
+    data.traffic_cycle_label
+    || data.traffic_total_display
+    || data.traffic_rx_display
+    || data.traffic_tx_display
+    || (typeof data.command === "string" && data.command.includes("vnstat")),
+  );
+  if (!hasTrafficContext) return "";
+  if (data.ok) {
+    if (data.traffic_total_display) {
+      if (data.traffic_data_coverage_ok === false) {
+        return `流量已更新，当前已用 ${data.traffic_total_display}，但当前周期数据可能尚未完整。`;
+      }
+      return `流量已更新，当前已用 ${data.traffic_total_display}。`;
+    }
+    return "流量已更新。";
+  }
+  return translateServerMessage(data.message, "获取流量失败。");
+}
+
+function summarizeServiceStatus(data) {
+  if (!data || typeof data !== "object") return "";
+  const hasServiceContext = Boolean(
+    data.service_status !== undefined
+    || data.service_ok !== undefined
+    || (typeof data.command === "string" && data.command.includes("trojan status")),
+  );
+  if (!hasServiceContext) return "";
+  if (data.service_status === "running") {
+    return data.network_checked === true
+      ? `Trojan 服务运行正常，${data.network_ok ? "网络可访问" : "网络不可访问"}。`
+      : "Trojan 服务运行正常。";
+  }
+  if (data.service_status === "not-running") {
+    return "Trojan 服务未正常运行。";
+  }
+  if (data.service_status === "unknown" && data.ok === false) {
+    return translateServerMessage(data.message, "状态检查失败。");
+  }
+  return "";
+}
+
+function summarizePortSwitchStatus(data) {
+  if (!data || typeof data !== "object") return "";
+  const command = typeof data.command === "string" ? data.command : "";
+  const hasSwitchContext = command.includes("trojan port");
+  if (!hasSwitchContext) return "";
+  if (data.ok) {
+    const portPart = data.current_port !== undefined && data.current_port !== null
+      ? `端口已切换为 ${data.current_port}`
+      : "端口已切换";
+    if (data.network_checked === true) {
+      return `${portPart}，${data.network_ok ? "网络可访问" : "网络不可访问"}。`;
+    }
+    return `${portPart}。`;
+  }
+  if (typeof data.message === "string" && data.message.startsWith("Port switched, but failed to save current_port:")) {
+    return "端口已切换，但保存当前端口失败。";
+  }
+  return translateServerMessage(data.message, "切换端口失败。");
+}
+
+function buildCardOutputSummary(data) {
+  if (!data || typeof data !== "object") return "等待操作...";
+  const switchSummary = summarizePortSwitchStatus(data);
+  if (switchSummary) return switchSummary;
+  const serviceSummary = summarizeServiceStatus(data);
+  if (serviceSummary) return serviceSummary;
+  const trafficSummary = summarizeTrafficStatus(data);
+  if (trafficSummary) return trafficSummary;
+  const networkSummary = summarizeNetworkStatus(data);
+  if (networkSummary) return networkSummary;
+  if (data.message) return translateServerMessage(data.message, "操作失败。");
+  if (data.network_message) return translateServerMessage(data.network_message, "网络检测失败。");
+  if (data.ok === true) return "操作已完成。";
+  if (data.ok === false) return "操作失败。";
+  return "等待操作...";
+}
+
+function getServerResultState(ok) {
+  if (ok === true) return "ok";
+  if (ok === false) return "err";
+  return "pending";
+}
+
+function setServerResult(card, {
+  ok = null,
+  summary = "等待操作...",
+  details = "",
+  title = "运行详情",
+} = {}) {
+  if (!card) return;
+  const panel = card.querySelector(".server-result");
+  const summaryEl = card.querySelector(".server-result-summary");
+  const detailBtn = card.querySelector(".server-result-detail");
+  const resultEl = card.querySelector(".result");
+  if (!resultEl) return;
+
+  if (!panel || !summaryEl || !detailBtn) {
+    markResult(resultEl, ok, String(details || summary || ""));
+    return;
+  }
+
+  const state = getServerResultState(ok);
+  panel.classList.remove("is-ok", "is-err", "is-pending", "is-idle");
+  panel.classList.add(state === "ok" ? "is-ok" : state === "err" ? "is-err" : summary === "等待操作..." ? "is-idle" : "is-pending");
+  summaryEl.textContent = String(summary || "等待操作...");
+  resultEl.textContent = String(details || "");
+
+  const hasDetails = Boolean(String(details || "").trim());
+  detailBtn.hidden = !hasDetails;
+  detailBtn.disabled = !hasDetails;
+  detailBtn.dataset.detailTitle = String(title || "运行详情");
+  detailBtn.dataset.detailSummary = String(summary || "");
+  detailBtn.dataset.detailState = state;
+}
+
+function openServerResultDialog(card) {
+  if (!card) return;
+  const detailBtn = card.querySelector(".server-result-detail");
+  const resultEl = card.querySelector(".result");
+  if (!detailBtn || !resultEl) return;
+  const details = resultEl.textContent || "";
+  if (!details.trim()) return;
+  showOutputDialog({
+    title: detailBtn.dataset.detailTitle || "运行详情",
+    summary: detailBtn.dataset.detailSummary || "",
+    details,
+    state: detailBtn.dataset.detailState || "idle",
+  });
+}
+
 function applyRuntimeToCard(card, data) {
   if (!card || !data) return;
   const currentEl = card.querySelector(".current-port-value");
@@ -335,7 +640,7 @@ function applyTrafficToCard(card, data) {
   const progressBarEl = card.querySelector(".traffic-progress-bar");
   const noteEl = card.querySelector(".traffic-note");
   const panelEl = card.querySelector(".traffic-panel");
-  if (!periodEl || !rxEl || !txEl || !totalEl || !quotaEl || !remainingEl || !percentEl || !progressEl || !progressBarEl || !noteEl || !panelEl) return;
+  if (!rxEl || !txEl || !totalEl || !quotaEl || !remainingEl || !percentEl || !progressEl || !progressBarEl || !noteEl || !panelEl) return;
   const hasTrafficMeta = Boolean(
     data.traffic_cycle_label
     || data.traffic_period_label
@@ -352,7 +657,7 @@ function applyTrafficToCard(card, data) {
   if (cycleBadgeEl && data.traffic_cycle_label) {
     cycleBadgeEl.textContent = data.traffic_cycle_label;
   }
-  if (data.traffic_period_label) {
+  if (periodEl && data.traffic_period_label) {
     periodEl.textContent = data.traffic_period_label;
   }
   if (data.traffic_rx_display) {
@@ -425,13 +730,21 @@ function applyCardResult(serverId, data) {
   applyRuntimeToCard(card, data);
   applyNetworkToCard(card, data);
   applyTrafficToCard(card, data);
-  const resultEl = card.querySelector(".result");
-  if (!resultEl) return;
-  markResult(resultEl, Boolean(data.ok), formatOutput(data));
+  setServerResult(card, {
+    ok: data.ok,
+    summary: buildCardOutputSummary(data),
+    details: formatOutput(data),
+    title: `${card.querySelector(".server-head h2")?.textContent || serverId} · 运行详情`,
+  });
 }
 
-async function switchPort(serverId, port, button, resultEl) {
-  markResult(resultEl, null, "正在执行 SSH 命令...");
+async function switchPort(serverId, port, button, card) {
+  setServerResult(card, {
+    ok: null,
+    summary: "正在执行 SSH 命令...",
+    details: "",
+    title: `${card.querySelector(".server-head h2")?.textContent || serverId} · 切换端口`,
+  });
   const restore = setButtonLoading(button, "执行中...");
   try {
     const resp = await fetch("/api/switch-port", {
@@ -443,14 +756,24 @@ async function switchPort(serverId, port, button, resultEl) {
     applyCardResult(serverId, data);
   } catch (err) {
     if (err instanceof UnauthorizedError) return;
-    markResult(resultEl, false, `request error: ${err}`);
+    setServerResult(card, {
+      ok: false,
+      summary: `请求失败：${err}`,
+      details: `request error: ${err}`,
+      title: `${card.querySelector(".server-head h2")?.textContent || serverId} · 切换端口`,
+    });
   } finally {
     restore();
   }
 }
 
-async function checkStatus(serverId, button, resultEl) {
-  markResult(resultEl, null, "正在检查 trojan 服务状态...");
+async function checkStatus(serverId, button, card) {
+  setServerResult(card, {
+    ok: null,
+    summary: "正在检查 trojan 服务状态...",
+    details: "",
+    title: `${card.querySelector(".server-head h2")?.textContent || serverId} · 状态检查`,
+  });
   const restore = setButtonLoading(button, "检查中...");
   try {
     const resp = await fetch("/api/trojan-status", {
@@ -462,14 +785,24 @@ async function checkStatus(serverId, button, resultEl) {
     applyCardResult(serverId, data);
   } catch (err) {
     if (err instanceof UnauthorizedError) return;
-    markResult(resultEl, false, `request error: ${err}`);
+    setServerResult(card, {
+      ok: false,
+      summary: `请求失败：${err}`,
+      details: `request error: ${err}`,
+      title: `${card.querySelector(".server-head h2")?.textContent || serverId} · 状态检查`,
+    });
   } finally {
     restore();
   }
 }
 
-async function checkNetwork(serverId, button, resultEl) {
-  markResult(resultEl, null, "正在检测地址端口连通性...");
+async function checkNetwork(serverId, button, card) {
+  setServerResult(card, {
+    ok: null,
+    summary: "正在检测地址端口连通性...",
+    details: "",
+    title: `${card.querySelector(".server-head h2")?.textContent || serverId} · 网络检测`,
+  });
   const restore = setButtonLoading(button, "检测中...");
   try {
     const resp = await fetch("/api/network-check", {
@@ -481,14 +814,24 @@ async function checkNetwork(serverId, button, resultEl) {
     applyCardResult(serverId, data);
   } catch (err) {
     if (err instanceof UnauthorizedError) return;
-    markResult(resultEl, false, `request error: ${err}`);
+    setServerResult(card, {
+      ok: false,
+      summary: `请求失败：${err}`,
+      details: `request error: ${err}`,
+      title: `${card.querySelector(".server-head h2")?.textContent || serverId} · 网络检测`,
+    });
   } finally {
     restore();
   }
 }
 
-async function checkTraffic(serverId, button, resultEl) {
-  markResult(resultEl, null, "正在读取当前周期流量...");
+async function checkTraffic(serverId, button, card) {
+  setServerResult(card, {
+    ok: null,
+    summary: "正在读取当前周期流量...",
+    details: "",
+    title: `${card.querySelector(".server-head h2")?.textContent || serverId} · 流量监控`,
+  });
   const restore = setButtonLoading(button, "读取中...");
   try {
     const resp = await fetch("/api/server-traffic", {
@@ -500,7 +843,12 @@ async function checkTraffic(serverId, button, resultEl) {
     applyCardResult(serverId, data);
   } catch (err) {
     if (err instanceof UnauthorizedError) return;
-    markResult(resultEl, false, `request error: ${err}`);
+    setServerResult(card, {
+      ok: false,
+      summary: `请求失败：${err}`,
+      details: `request error: ${err}`,
+      title: `${card.querySelector(".server-head h2")?.textContent || serverId} · 流量监控`,
+    });
   } finally {
     restore();
   }
@@ -1376,18 +1724,28 @@ function initServerCards() {
     const statusBtn = card.querySelector(".status-btn");
     const networkBtn = card.querySelector(".network-btn");
     const trafficBtn = card.querySelector(".traffic-btn");
-    const resultEl = card.querySelector(".result");
-    if (!serverId || !input || !submitBtn || !statusBtn || !networkBtn || !trafficBtn || !resultEl) return;
+    if (!serverId || !input || !submitBtn || !statusBtn || !networkBtn || !trafficBtn) return;
 
     const initial = initialServers.find((item) => item.id === serverId);
     if (initial) {
       applyRuntimeToCard(card, initial);
       applyTrafficToCard(card, initial);
     }
+    setServerResult(card, {
+      ok: null,
+      summary: "等待操作...",
+      details: "",
+      title: `${card.querySelector(".server-head h2")?.textContent || serverId} · 运行详情`,
+    });
 
     card.addEventListener("click", (event) => {
       const target = event.target;
       if (!(target instanceof Element)) return;
+      const detailTrigger = target.closest(".server-result-detail");
+      if (detailTrigger) {
+        openServerResultDialog(card);
+        return;
+      }
       const btn = target.closest(".quick-btn");
       if (!btn) return;
       const p = btn.dataset.port;
@@ -1399,22 +1757,27 @@ function initServerCards() {
     submitBtn.addEventListener("click", async () => {
       const port = Number(input.value);
       if (!Number.isInteger(port) || port < 1 || port > 65535) {
-        markResult(resultEl, false, "端口必须是 1-65535 的整数");
+        setServerResult(card, {
+          ok: false,
+          summary: "端口必须是 1-65535 的整数",
+          details: "端口必须是 1-65535 的整数",
+          title: `${card.querySelector(".server-head h2")?.textContent || serverId} · 切换端口`,
+        });
         return;
       }
-      await switchPort(serverId, port, submitBtn, resultEl);
+      await switchPort(serverId, port, submitBtn, card);
     });
 
     statusBtn.addEventListener("click", async () => {
-      await checkStatus(serverId, statusBtn, resultEl);
+      await checkStatus(serverId, statusBtn, card);
     });
 
     networkBtn.addEventListener("click", async () => {
-      await checkNetwork(serverId, networkBtn, resultEl);
+      await checkNetwork(serverId, networkBtn, card);
     });
 
     trafficBtn.addEventListener("click", async () => {
-      await checkTraffic(serverId, trafficBtn, resultEl);
+      await checkTraffic(serverId, trafficBtn, card);
     });
 
     input.addEventListener("keydown", async (event) => {

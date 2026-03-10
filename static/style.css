@@ -241,7 +241,14 @@ button,
 .ghost-btn,
 .danger-btn,
 .quick-btn {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font-family: inherit;
+  line-height: 1.2;
+  white-space: nowrap;
 }
 
 .config-actions button,
@@ -447,6 +454,68 @@ body.has-modal-open {
   filter: brightness(1.03);
 }
 
+.theme-dialog-output .theme-dialog-card {
+  width: min(760px, calc(100vw - 30px));
+  padding: 0;
+  overflow: hidden;
+}
+
+.theme-output-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 18px 0;
+}
+
+.theme-output-copy {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.theme-output-summary {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.88rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.theme-output-summary.is-ok {
+  color: #0f6d58;
+}
+
+.theme-output-summary.is-err {
+  color: #a7283a;
+}
+
+.theme-output-summary.is-pending {
+  color: #35526f;
+}
+
+.theme-output-close {
+  flex-shrink: 0;
+}
+
+.theme-output-body {
+  margin: 0;
+  min-height: 220px;
+  max-height: min(62vh, 560px);
+  overflow: auto;
+  padding: 16px 18px 18px;
+  border-top: 1px solid rgba(216, 210, 195, 0.9);
+  background:
+    linear-gradient(180deg, rgba(14, 143, 138, 0.04), rgba(14, 143, 138, 0) 18%),
+    #fffdf8;
+  color: #28344d;
+  font-family: "IBM Plex Mono", "SF Mono", "Consolas", monospace;
+  font-size: 0.78rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
@@ -621,16 +690,16 @@ body.has-modal-open {
 }
 
 .traffic-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
   gap: 10px;
-  flex-wrap: wrap;
 }
 
 .traffic-head-copy {
   display: grid;
   gap: 5px;
+  min-width: 0;
 }
 
 .traffic-title,
@@ -648,6 +717,8 @@ body.has-modal-open {
 .traffic-cycle-badge {
   display: inline-flex;
   align-items: center;
+  justify-self: end;
+  flex-shrink: 0;
   min-height: 28px;
   padding: 4px 10px;
   border-radius: 999px;
@@ -657,12 +728,20 @@ body.has-modal-open {
   font-size: 0.75rem;
   font-weight: 700;
   letter-spacing: 0.01em;
+  white-space: nowrap;
 }
 
 .traffic-period-line,
 .traffic-note {
   color: #617089;
   font-size: 0.8rem;
+}
+
+.traffic-period-line {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .traffic-period-value {
@@ -857,6 +936,24 @@ body.has-modal-open {
   min-height: 40px;
 }
 
+.server-card .submit-btn,
+.server-card .status-btn,
+.server-card .network-btn,
+.server-card .traffic-btn {
+  min-height: 40px;
+}
+
+.server-card .submit-btn:hover,
+.server-card .status-btn:hover,
+.server-card .network-btn:hover,
+.server-card .traffic-btn:hover,
+.server-card .submit-btn:active,
+.server-card .status-btn:active,
+.server-card .network-btn:active,
+.server-card .traffic-btn:active {
+  transform: none;
+}
+
 /* Primary actions: save config / generate subscription / switch port */
 #save-servers-btn,
 #sub-generate-btn,
@@ -952,6 +1049,78 @@ body.has-modal-open {
 .result.err {
   border-color: rgba(191, 31, 47, 0.52);
   background: #fff4f6;
+}
+
+.server-result {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  margin: 0;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, rgba(31, 79, 112, 0.04), rgba(31, 79, 112, 0) 58%),
+    rgba(255, 255, 255, 0.86);
+}
+
+.server-result.is-ok {
+  border-color: rgba(21, 124, 80, 0.26);
+  background:
+    linear-gradient(180deg, rgba(21, 124, 80, 0.08), rgba(21, 124, 80, 0) 56%),
+    rgba(246, 253, 249, 0.92);
+}
+
+.server-result.is-err {
+  border-color: rgba(191, 31, 47, 0.26);
+  background:
+    linear-gradient(180deg, rgba(191, 31, 47, 0.08), rgba(191, 31, 47, 0) 56%),
+    rgba(255, 247, 248, 0.92);
+}
+
+.server-result.is-pending {
+  border-color: rgba(42, 98, 134, 0.22);
+  background:
+    linear-gradient(180deg, rgba(42, 98, 134, 0.08), rgba(42, 98, 134, 0) 56%),
+    rgba(248, 251, 255, 0.92);
+}
+
+.server-result.is-idle {
+  border-style: dashed;
+}
+
+.server-result-copy {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.server-result-label {
+  flex-shrink: 0;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #5f6f89;
+  text-transform: uppercase;
+}
+
+.server-result-summary {
+  margin: 0;
+  min-width: 0;
+  color: var(--ink);
+  font-size: 0.84rem;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.server-result-detail {
+  min-height: 36px;
+  padding-inline: 12px;
 }
 
 .sub-token-row {
@@ -1765,6 +1934,20 @@ body.has-modal-open {
     border-top: 1px dashed rgba(184, 171, 147, 0.76);
   }
 
+  .traffic-head {
+    grid-template-columns: 1fr;
+  }
+
+  .traffic-cycle-badge {
+    justify-self: start;
+  }
+
+  .traffic-period-line {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+  }
+
   .traffic-foot {
     align-items: stretch;
   }
@@ -1776,6 +1959,23 @@ body.has-modal-open {
   .theme-dialog-btn {
     flex: 1 1 100%;
     justify-content: center;
+  }
+
+  .theme-output-head {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .theme-output-close {
+    width: 100%;
+  }
+
+  .server-result {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .server-result-detail {
+    width: auto;
   }
 
   .top-link {

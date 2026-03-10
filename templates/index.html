@@ -147,7 +147,6 @@
               <div class="traffic-head">
                 <div class="traffic-head-copy">
                   <p class="traffic-title">流量监控</p>
-                  <p class="traffic-period-line">当前周期: <span class="traffic-period-value">未获取</span></p>
                 </div>
                 <span class="traffic-cycle-badge">{{ s.traffic_cycle_label }}</span>
               </div>
@@ -215,7 +214,14 @@
               <button class="status-btn ghost-btn" type="button">检查状态</button>
               <button class="network-btn ghost-btn" type="button">检测网络</button>
             </div>
-            <pre class="result">等待操作...</pre>
+            <section class="server-result is-idle" aria-live="polite">
+              <div class="server-result-copy">
+                <span class="server-result-label">最近操作</span>
+                <p class="server-result-summary">等待操作...</p>
+              </div>
+              <button class="ghost-btn server-result-detail" type="button" hidden>查看详情</button>
+            </section>
+            <pre class="result" hidden>等待操作...</pre>
           </article>
         {% endfor %}
       </section>

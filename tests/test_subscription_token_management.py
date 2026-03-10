@@ -137,7 +137,7 @@ class SubscriptionTokenManagementTests(unittest.TestCase):
         )
 
     def test_generate_subscription_with_expiry(self) -> None:
-        expires_at = "2026-03-10T04:00:00Z"
+        expires_at = "2030-03-10T04:00:00Z"
         resp = self.client.post(
             "/api/subscription-link",
             json={"server_ids": ["hk-main"], "token": "expiring", "expires_at": expires_at},
@@ -744,6 +744,9 @@ class SubscriptionTokenManagementTests(unittest.TestCase):
         self.assertIn('id="sub-expiry-minute"', html)
         self.assertIn("流量监控", html)
         self.assertIn("刷新流量", html)
+        self.assertIn("server-result-summary", html)
+        self.assertIn("server-result-detail", html)
+        self.assertNotIn("当前周期:", html)
 
     def test_subscriptions_page_redirects_to_login_when_auth_enabled(self) -> None:
         self.write_config(
