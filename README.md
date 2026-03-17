@@ -8,7 +8,7 @@
 - 单台检查 Trojan 服务运行状态（执行 `trojan status`）
 - 可选登录鉴权（账号密码保存到 `servers.json`）
 - 可选手机号验证码登录（阿里云短信，手机号白名单配置在 `servers.json`）
-- Trojan 订阅地址生成（单选/多选服务器，返回 trojan 链接 base64）
+- Trojan / Clash 订阅地址生成（单选/多选服务器，支持 Trojan Base64 与 Clash YAML）
 
 ## 2. 环境要求
 
@@ -223,6 +223,19 @@ trojan://example-password@node.example.net:443?security=tls&headerType=none&type
 ```
 
 注意：如果某台服务器未配置 `addr`、`current_port` 或 `trojan_password`，生成会失败并提示具体缺失字段。
+
+### 5.8 Clash 订阅地址（YAML）
+
+- 生成订阅后，面板还会同时返回一个 Clash 订阅 URL（形如 `/sub/clash/<token>`）
+- 该地址返回标准 YAML，包含所选服务器对应的 `trojan` 节点、代理组和基础规则
+- 订阅顶部会附带当前已用流量、总流量、剩余流量等注释信息
+- 响应头会尽量返回 `Subscription-Userinfo`、`X-Subscription-Upload`、`X-Subscription-Download`、`X-Subscription-Used` 等字段，便于支持的客户端显示使用量
+- 若部分节点当前无法读取 `vnstat`，Clash 订阅仍会正常返回，但流量信息会标注为部分汇总
+
+说明：
+
+- Clash 订阅依赖服务器已配置 `addr`、`current_port`、`trojan_password`
+- 若节点流量监控需要准确显示，远端服务器还需要正常安装并运行 `vnstat`
 
 ## 6. 部署操作（生产环境）
 

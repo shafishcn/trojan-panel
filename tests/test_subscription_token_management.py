@@ -101,6 +101,7 @@ class SubscriptionTokenManagementTests(unittest.TestCase):
         self.assertEqual(body["server_count"], 2)
         self.assertEqual(body["server_ids"], ["hk-main", "sg-main"])
         self.assertEqual(len(body["links"]), 2)
+        self.assertTrue(body["clash_url"].endswith("/sub/clash/teamA"))
 
         list_resp = self.client.get("/api/subscriptions")
         self.assertEqual(list_resp.status_code, 200)
@@ -116,6 +117,7 @@ class SubscriptionTokenManagementTests(unittest.TestCase):
         self.assertFalse(item["expired"])
         self.assertEqual(item["expiry_state"], "permanent")
         self.assertTrue(item["url"].endswith("/sub/teamA"))
+        self.assertTrue(item["clash_url"].endswith("/sub/clash/teamA"))
 
     def test_generate_with_existing_token_sets_overwritten(self) -> None:
         self.write_config(subscriptions={"teamA": ["hk-main"]})
@@ -274,6 +276,66 @@ class SubscriptionTokenManagementTests(unittest.TestCase):
         self.assertEqual(len(lines), 2)
         self.assertTrue(all(line.startswith("trojan://") for line in lines))
 
+    def test_clash_subscription_content_returns_yaml_and_usage_headers(self) -> None:
+        create_resp = self.client.post(
+            "/api/subscription-link",
+            json={"server_ids": ["hk-main", "sg-main"], "token": "bundle"},
+        )
+        self.assertEqual(create_resp.status_code, 200)
+        self.assertTrue(create_resp.get_json()["ok"])
+
+        quota_bytes = 2048 * 1024**3
+        with patch.object(
+            app_module,
+            "run_server_traffic_check",
+            side_effect=[
+                {
+                    "ok": True,
+                    "traffic_rx_bytes": 100,
+                    "traffic_tx_bytes": 20,
+                    "traffic_total_bytes": 120,
+                    "traffic_rx_display": "100 B",
+                    "traffic_tx_display": "20 B",
+                    "traffic_total_display": "120 B",
+                    "traffic_quota_bytes": quota_bytes,
+                    "traffic_quota_display": "2048 GB",
+                    "traffic_remaining_bytes": quota_bytes - 120,
+                    "traffic_remaining_display": "2048 GB",
+                    "traffic_quota_percent": 0.0,
+                    "traffic_cycle_label": "自然月（每月 1 日）",
+                },
+                {
+                    "ok": True,
+                    "traffic_rx_bytes": 50,
+                    "traffic_tx_bytes": 10,
+                    "traffic_total_bytes": 60,
+                    "traffic_rx_display": "50 B",
+                    "traffic_tx_display": "10 B",
+                    "traffic_total_display": "60 B",
+                    "traffic_quota_bytes": quota_bytes,
+                    "traffic_quota_display": "2048 GB",
+                    "traffic_remaining_bytes": quota_bytes - 60,
+                    "traffic_remaining_display": "2048 GB",
+                    "traffic_quota_percent": 0.0,
+                    "traffic_cycle_label": "自然月（每月 1 日）",
+                },
+            ],
+        ):
+            resp = self.client.get("/sub/clash/bundle")
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.mimetype, "text/yaml")
+        body = resp.get_data(as_text=True)
+        self.assertIn('type: trojan', body)
+        self.assertIn('name: "Hong Kong Main"', body)
+        self.assertIn('name: "Singapore Main"', body)
+        self.assertIn("# traffic_used: 180 B", body)
+        self.assertEqual(resp.headers.get("X-Subscription-Upload"), "30")
+        self.assertEqual(resp.headers.get("X-Subscription-Download"), "150")
+        self.assertEqual(resp.headers.get("X-Subscription-Used"), "180")
+        self.assertIn("upload=30", resp.headers.get("Subscription-Userinfo", ""))
+        self.assertIn("download=150", resp.headers.get("Subscription-Userinfo", ""))
+
     def test_subscription_content_returns_gone_when_expired(self) -> None:
         self.write_config(
             subscriptions={
@@ -283,6 +345,18 @@ class SubscriptionTokenManagementTests(unittest.TestCase):
         now = datetime.datetime(2026, 3, 9, 12, 0, tzinfo=datetime.timezone.utc)
         with patch.object(app_module, "utc_now", return_value=now):
             sub_resp = self.client.get("/sub/bundle")
+        self.assertEqual(sub_resp.status_code, 410)
+        self.assertIn("expired", sub_resp.get_data(as_text=True))
+
+    def test_clash_subscription_content_returns_gone_when_expired(self) -> None:
+        self.write_config(
+            subscriptions={
+                "bundle": {"server_ids": ["hk-main"], "expires_at": "2026-03-08T12:00:00Z"}
+            }
+        )
+        now = datetime.datetime(2026, 3, 9, 12, 0, tzinfo=datetime.timezone.utc)
+        with patch.object(app_module, "utc_now", return_value=now):
+            sub_resp = self.client.get("/sub/clash/bundle")
         self.assertEqual(sub_resp.status_code, 410)
         self.assertIn("expired", sub_resp.get_data(as_text=True))
 

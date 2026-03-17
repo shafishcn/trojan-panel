@@ -900,7 +900,8 @@ function formatSubscriptionResult(data) {
   if (data.expires_at !== undefined || data.expiry_state !== undefined) {
     lines.push(`expiry: ${formatSubscriptionExpiry(data.expires_at, Boolean(data.expired))}`);
   }
-  if (data.url) lines.push(`subscription url: ${data.url}`);
+  if (data.url) lines.push(`trojan subscription url: ${data.url}`);
+  if (data.clash_url) lines.push(`clash subscription url: ${data.clash_url}`);
   if (Array.isArray(data.links) && data.links.length) lines.push(`links:\n${data.links.join("\n")}`);
   return lines.join("\n");
 }
@@ -1589,11 +1590,30 @@ function initSubscriptionPanel() {
     const card = el.closest(".server-card");
     return card ? card.getAttribute("data-server-id") || "" : "";
   };
+  const getServerNameByCheck = (el) => {
+    const card = el.closest(".server-card");
+    const titleEl = card ? card.querySelector(".server-head h2") : null;
+    return titleEl ? String(titleEl.textContent || "").trim() : "";
+  };
   const getSelectedServerIds = () => {
     return allChecks()
       .filter((el) => el.checked)
       .map((el) => getServerIdByCheck(el))
       .filter((x) => Boolean(x));
+  };
+  const getSelectedServerNames = () => {
+    return allChecks()
+      .filter((el) => el.checked)
+      .map((el) => getServerNameByCheck(el))
+      .filter((x) => Boolean(x));
+  };
+  const announceSelection = (prefix) => {
+    const names = getSelectedServerNames();
+    if (!names.length) {
+      markResult(resultEl, null, `${prefix}当前未选择任何订阅节点。`);
+      return;
+    }
+    markResult(resultEl, null, `${prefix}当前已选择 ${names.length} 个节点：${names.join("、")}`);
   };
 
   const tokenFromQuery = new URLSearchParams(window.location.search).get("token") || "";
@@ -1604,13 +1624,24 @@ function initSubscriptionPanel() {
 
   selectAllBtn.addEventListener("click", () => {
     for (const el of allChecks()) el.checked = true;
-    markResult(resultEl, null, "已全选服务器。");
+    announceSelection("已全选。");
   });
 
   clearBtn.addEventListener("click", () => {
     for (const el of allChecks()) el.checked = false;
-    markResult(resultEl, null, "已清空选择。");
+    announceSelection("已清空。");
   });
+
+  for (const el of allChecks()) {
+    el.addEventListener("change", () => {
+      const name = getServerNameByCheck(el) || getServerIdByCheck(el) || "当前节点";
+      if (el.checked) {
+        announceSelection(`已加入订阅：${name}。`);
+      } else {
+        announceSelection(`已取消订阅：${name}。`);
+      }
+    });
+  }
 
   genBtn.addEventListener("click", async () => {
     const selectedIds = getSelectedServerIds();
@@ -1746,14 +1777,24 @@ function initSubscriptionManagerPage() {
       row.appendChild(expiryLine);
 
       const url = typeof item.url === "string" ? item.url : "";
+      const clashUrl = typeof item.clash_url === "string" ? item.clash_url : "";
       if (url) {
         const urlLine = document.createElement("a");
         urlLine.className = "sub-token-url";
         urlLine.href = url;
         urlLine.target = "_blank";
         urlLine.rel = "noopener noreferrer";
-        urlLine.textContent = url;
+        urlLine.textContent = `Trojan 订阅: ${url}`;
         row.appendChild(urlLine);
+      }
+      if (clashUrl) {
+        const clashUrlLine = document.createElement("a");
+        clashUrlLine.className = "sub-token-url";
+        clashUrlLine.href = clashUrl;
+        clashUrlLine.target = "_blank";
+        clashUrlLine.rel = "noopener noreferrer";
+        clashUrlLine.textContent = `Clash 订阅: ${clashUrl}`;
+        row.appendChild(clashUrlLine);
       }
 
       const actions = document.createElement("div");
@@ -1771,7 +1812,7 @@ function initSubscriptionManagerPage() {
       const copyBtn = document.createElement("button");
       copyBtn.type = "button";
       copyBtn.className = "ghost-btn";
-      copyBtn.textContent = "复制链接";
+      copyBtn.textContent = "V2rayN订阅";
       if (expired) {
         copyBtn.disabled = true;
         copyBtn.title = "订阅已过期，请重新生成";
@@ -1785,15 +1826,54 @@ function initSubscriptionManagerPage() {
           const copied = buildCopyUrl(url);
           await navigator.clipboard.writeText(copied.url);
           if (copied.forcedHttps) {
-            markResult(resultEl, true, `已复制订阅地址: ${token}（域名链接已强制 HTTPS）`);
+            markResult(resultEl, true, `已复制 V2rayN 订阅: ${token}（域名链接已强制 HTTPS）`);
           } else {
-            markResult(resultEl, true, `已复制订阅地址: ${token}`);
+            markResult(resultEl, true, `已复制 V2rayN 订阅: ${token}`);
           }
+          await showThemeDialog({
+            title: "V2rayN订阅已复制",
+            message: "订阅地址已经复制到剪贴板。打开 V2rayN 后，进入订阅分组或订阅设置，粘贴该地址即可导入节点。",
+            confirmText: "知道了",
+            hideCancel: true,
+          });
         } catch (err) {
           markResult(resultEl, false, `复制失败: ${err}`);
         }
       });
       actions.appendChild(copyBtn);
+
+      const copyClashBtn = document.createElement("button");
+      copyClashBtn.type = "button";
+      copyClashBtn.className = "ghost-btn";
+      copyClashBtn.textContent = "Clash订阅";
+      if (expired) {
+        copyClashBtn.disabled = true;
+        copyClashBtn.title = "订阅已过期，请重新生成";
+      }
+      copyClashBtn.addEventListener("click", async () => {
+        if (!clashUrl) {
+          markResult(resultEl, false, "当前订阅没有可复制的 Clash 链接。");
+          return;
+        }
+        try {
+          const copied = buildCopyUrl(clashUrl);
+          await navigator.clipboard.writeText(copied.url);
+          if (copied.forcedHttps) {
+            markResult(resultEl, true, `已复制 Clash订阅: ${token}（域名链接已强制 HTTPS）`);
+          } else {
+            markResult(resultEl, true, `已复制 Clash订阅: ${token}`);
+          }
+          await showThemeDialog({
+            title: "Clash订阅已复制",
+            message: "订阅地址已经复制到剪贴板。打开 Clash 客户端后，在配置导入或订阅管理中粘贴该地址即可同步节点与流量信息。",
+            confirmText: "知道了",
+            hideCancel: true,
+          });
+        } catch (err) {
+          markResult(resultEl, false, `复制失败: ${err}`);
+        }
+      });
+      actions.appendChild(copyClashBtn);
 
       const deleteBtn = document.createElement("button");
       deleteBtn.type = "button";

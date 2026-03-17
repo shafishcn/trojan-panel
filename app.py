@@ -416,9 +416,11 @@ def clean_subscription_view(token: str, subscription: dict[str, Any], server_nam
     missing_server_ids = [x for x in server_ids if x not in server_name_by_id]
     expires_at = subscription.get("expires_at")
     expiry_state = get_subscription_expiry_state(subscription)
+    clash_url = request.host_url.rstrip("/") + url_for("clash_subscription_content", token=token)
     return {
         "token": token,
         "url": sub_url,
+        "clash_url": clash_url,
         "server_ids": server_ids,
         "server_count": len(server_ids),
         "server_names": [server_name_by_id[x] for x in server_ids if x in server_name_by_id],
@@ -778,6 +780,347 @@ def build_subscription_links(selected: list[dict[str, Any]]) -> list[str]:
     return links
 
 
+def build_clash_proxy_items(selected: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    used_names: set[str] = set()
+    for server in selected:
+        server_id = str(server.get("id", "")).strip() or "unknown"
+        server_name = str(server.get("name", "")).strip() or server_id
+        proxy_name = server_name
+        if proxy_name in used_names:
+            proxy_name = f"{server_name} ({server_id})"
+        used_names.add(proxy_name)
+
+        raw_addr = server.get("addr")
+        addr = str(raw_addr).strip() if raw_addr is not None else ""
+        if not addr:
+            raise ValueError(f"Server `{server_id}` missing `addr`.")
+
+        try:
+            port = parse_current_port(server.get("current_port"))
+        except ValueError:
+            port = None
+        if port is None:
+            raise ValueError(f"Server `{server_id}` missing valid `current_port`.")
+
+        raw_password = server.get("trojan_password")
+        password = str(raw_password) if raw_password is not None else ""
+        if not password:
+            raise ValueError(f"Server `{server_id}` missing `trojan_password`.")
+
+        items.append(
+            {
+                "server_id": server_id,
+                "name": proxy_name,
+                "server": addr,
+                "port": port,
+                "password": password,
+                "sni": addr,
+                "udp": True,
+                "skip_cert_verify": False,
+            }
+        )
+    return items
+
+
+def yaml_scalar(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return str(value)
+    return json.dumps("" if value is None else str(value), ensure_ascii=False)
+
+
+def collect_subscription_usage(selected: list[dict[str, Any]], expires_at: str | None) -> dict[str, Any]:
+    if not selected:
+        return {
+            "ok": False,
+            "partial": False,
+            "checked_server_count": 0,
+            "successful_server_count": 0,
+            "errors": [],
+        }
+
+    worker_count = min(4, len(selected))
+    results: list[dict[str, Any]] = []
+    errors: list[str] = []
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        futures = {executor.submit(run_server_traffic_check, server): server for server in selected}
+        for future in as_completed(futures):
+            server = futures[future]
+            server_name = str(server.get("name", "")).strip() or str(server.get("id", "")).strip() or "unknown"
+            try:
+                item = future.result()
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"{server_name}: {exc}")
+                continue
+            if item.get("ok"):
+                results.append(item)
+                continue
+            message = str(item.get("message", "")).strip() or "流量读取失败"
+            errors.append(f"{server_name}: {message}")
+
+    upload = sum(int(item.get("traffic_tx_bytes", 0) or 0) for item in results)
+    download = sum(int(item.get("traffic_rx_bytes", 0) or 0) for item in results)
+    used = sum(int(item.get("traffic_total_bytes", 0) or 0) for item in results)
+
+    quota_values = [item.get("traffic_quota_bytes") for item in results if item.get("traffic_quota_bytes") is not None]
+    quota_configured_for_all = len(results) == len(selected) and len(quota_values) == len(selected)
+    total_quota = sum(int(value or 0) for value in quota_values) if quota_values else None
+    remaining = max(total_quota - used, 0) if total_quota is not None else None
+    percent = round((used / total_quota) * 100, 1) if total_quota and total_quota > 0 else None
+
+    expire_ts = None
+    expires_dt = parse_subscription_expiry_dt(expires_at)
+    if expires_dt is not None:
+        expire_ts = int(expires_dt.timestamp())
+
+    cycle_labels = {str(item.get("traffic_cycle_label", "")).strip() for item in results if str(item.get("traffic_cycle_label", "")).strip()}
+    return {
+        "ok": bool(results),
+        "partial": bool(errors),
+        "checked_server_count": len(selected),
+        "successful_server_count": len(results),
+        "errors": errors,
+        "upload_bytes": upload,
+        "download_bytes": download,
+        "used_bytes": used,
+        "upload_display": format_traffic_bytes(upload),
+        "download_display": format_traffic_bytes(download),
+        "used_display": format_traffic_bytes(used),
+        "total_quota_bytes": total_quota,
+        "total_quota_display": format_traffic_gb(total_quota) if total_quota is not None else "",
+        "remaining_bytes": remaining,
+        "remaining_display": format_traffic_gb(remaining) if remaining is not None else "",
+        "quota_percent": percent,
+        "expire_ts": expire_ts,
+        "quota_complete": quota_configured_for_all,
+        "traffic_cycle_label": cycle_labels.pop() if len(cycle_labels) == 1 else "",
+    }
+
+
+def build_subscription_userinfo_header(usage: dict[str, Any]) -> str:
+    total_quota = usage.get("total_quota_bytes")
+    if total_quota is None:
+        return ""
+    upload = int(usage.get("upload_bytes", 0) or 0)
+    download = int(usage.get("download_bytes", 0) or 0)
+    expire_ts = usage.get("expire_ts")
+    parts = [
+        f"upload={upload}",
+        f"download={download}",
+        f"total={int(total_quota)}",
+    ]
+    if expire_ts is not None:
+        parts.append(f"expire={int(expire_ts)}")
+    return "; ".join(parts)
+
+
+def build_subscription_headers(usage: dict[str, Any], token: str, filename_suffix: str) -> dict[str, str]:
+    headers = {
+        "profile-update-interval": "24",
+        "content-disposition": f"inline; filename*=UTF-8''{quote(token + filename_suffix)}",
+    }
+    if usage.get("ok"):
+        headers["X-Subscription-Upload"] = str(int(usage.get("upload_bytes", 0) or 0))
+        headers["X-Subscription-Download"] = str(int(usage.get("download_bytes", 0) or 0))
+        headers["X-Subscription-Used"] = str(int(usage.get("used_bytes", 0) or 0))
+        if usage.get("total_quota_bytes") is not None:
+            headers["X-Subscription-Total"] = str(int(usage["total_quota_bytes"]))
+        if usage.get("remaining_bytes") is not None:
+            headers["X-Subscription-Remaining"] = str(int(usage["remaining_bytes"]))
+        if usage.get("quota_percent") is not None:
+            headers["X-Subscription-Used-Percent"] = str(usage["quota_percent"])
+        if usage.get("traffic_cycle_label"):
+            headers["X-Subscription-Traffic-Cycle"] = str(usage["traffic_cycle_label"])
+        if usage.get("partial"):
+            headers["X-Subscription-Partial"] = "true"
+        userinfo = build_subscription_userinfo_header(usage)
+        if userinfo:
+            headers["Subscription-Userinfo"] = userinfo
+    return headers
+
+
+def build_clash_subscription_yaml(token: str, selected: list[dict[str, Any]], subscription: dict[str, Any], usage: dict[str, Any]) -> str:
+    proxies = build_clash_proxy_items(selected)
+    proxy_names = [item["name"] for item in proxies]
+    now_text = format_utc_datetime(utc_now())
+    lines = [
+        f"# Trojan Panel Clash subscription",
+        f"# token: {token}",
+        f"# generated_at: {now_text}",
+        f"# server_count: {len(proxies)}",
+    ]
+    if usage.get("ok"):
+        lines.extend(
+            [
+                f"# traffic_upload: {usage['upload_display']}",
+                f"# traffic_download: {usage['download_display']}",
+                f"# traffic_used: {usage['used_display']}",
+            ]
+        )
+        if usage.get("total_quota_display"):
+            lines.append(f"# traffic_total: {usage['total_quota_display']}")
+        if usage.get("remaining_display"):
+            lines.append(f"# traffic_remaining: {usage['remaining_display']}")
+        if usage.get("quota_percent") is not None:
+            lines.append(f"# traffic_used_percent: {usage['quota_percent']}%")
+        if usage.get("traffic_cycle_label"):
+            lines.append(f"# traffic_cycle: {usage['traffic_cycle_label']}")
+        if usage.get("partial"):
+            lines.append("# traffic_note: 部分节点流量读取失败，当前数据为已成功节点汇总。")
+    else:
+        lines.append("# traffic_note: 当前无法读取节点流量信息。")
+    if usage.get("errors"):
+        lines.extend(f"# traffic_error: {message}" for message in usage["errors"][:5])
+
+    expires_at = subscription.get("expires_at")
+    if expires_at:
+        lines.append(f"# expires_at: {expires_at}")
+
+    lines.extend(
+        [
+            "proxies:",
+        ]
+    )
+    for item in proxies:
+        lines.extend(
+            [
+                f"  - name: {yaml_scalar(item['name'])}",
+                "    type: trojan",
+                f"    server: {yaml_scalar(item['server'])}",
+                f"    port: {yaml_scalar(item['port'])}",
+                f"    password: {yaml_scalar(item['password'])}",
+                f"    udp: {yaml_scalar(False)}",
+                f"    sni: {yaml_scalar(item['sni'])}",
+                f"    skip-cert-verify: {yaml_scalar(item['skip_cert_verify'])}",
+            ]
+        )
+
+    lines.extend(
+        [
+            "",
+            "proxy-groups:",
+            "  - name: \"PROXY\"",
+            "    type: select",
+            "    proxies:",
+        ]
+    )
+    for name in proxy_names:
+        lines.append(f"    - {name}")
+
+    lines.extend(
+        [
+            "",
+            "rule-providers:",
+            "  reject:",
+            "    type: http",
+            "    behavior: domain",
+            "    url: \"https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/reject.txt\"",
+            "    path: ./ruleset/reject.yaml",
+            "    interval: 86400",
+            "",
+            "  icloud:",
+            "    type: http",
+            "    behavior: domain",
+            "    url: \"https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/icloud.txt\"",
+            "    path: ./ruleset/icloud.yaml",
+            "    interval: 86400",
+            "",
+            "  apple:",
+            "    type: http",
+            "    behavior: domain",
+            "    url: \"https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/apple.txt\"",
+            "    path: ./ruleset/apple.yaml",
+            "    interval: 86400",
+            "",
+            "  google:",
+            "    type: http",
+            "    behavior: domain",
+            "    url: \"https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/google.txt\"",
+            "    path: ./ruleset/google.yaml",
+            "    interval: 86400",
+            "",
+            "  proxy:",
+            "    type: http",
+            "    behavior: domain",
+            "    url: \"https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/proxy.txt\"",
+            "    path: ./ruleset/proxy.yaml",
+            "    interval: 86400",
+            "",
+            "  direct:",
+            "    type: http",
+            "    behavior: domain",
+            "    url: \"https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/direct.txt\"",
+            "    path: ./ruleset/direct.yaml",
+            "    interval: 86400",
+            "",
+            "  private:",
+            "    type: http",
+            "    behavior: domain",
+            "    url: \"https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/private.txt\"",
+            "    path: ./ruleset/private.yaml",
+            "    interval: 86400",
+            "",
+            "  gfw:",
+            "    type: http",
+            "    behavior: domain",
+            "    url: \"https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/gfw.txt\"",
+            "    path: ./ruleset/gfw.yaml",
+            "    interval: 86400",
+            "",
+            "  tld-not-cn:",
+            "    type: http",
+            "    behavior: domain",
+            "    url: \"https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/tld-not-cn.txt\"",
+            "    path: ./ruleset/tld-not-cn.yaml",
+            "    interval: 86400",
+            "",
+            "  telegramcidr:",
+            "    type: http",
+            "    behavior: ipcidr",
+            "    url: \"https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/telegramcidr.txt\"",
+            "    path: ./ruleset/telegramcidr.yaml",
+            "    interval: 86400",
+            "",
+            "  cncidr:",
+            "    type: http",
+            "    behavior: ipcidr",
+            "    url: \"https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/cncidr.txt\"",
+            "    path: ./ruleset/cncidr.yaml",
+            "    interval: 86400",
+            "",
+            "  lancidr:",
+            "    type: http",
+            "    behavior: ipcidr",
+            "    url: \"https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/lancidr.txt\"",
+            "    path: ./ruleset/lancidr.yaml",
+            "    interval: 86400",
+            "",
+            "  applications:",
+            "    type: http",
+            "    behavior: classical",
+            "    url: \"https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/applications.txt\"",
+            "    path: ./ruleset/applications.yaml",
+            "    interval: 86400",
+            "",
+            "rules:",
+            "  - RULE-SET,applications,DIRECT",
+            "  - DOMAIN,clash.razord.top,DIRECT",
+            "  - DOMAIN,yacd.haishan.me,DIRECT",
+            "  - RULE-SET,private,DIRECT",
+            "  - RULE-SET,reject,REJECT",
+            "  - RULE-SET,tld-not-cn,PROXY",
+            "  - RULE-SET,gfw,PROXY",
+            "  - RULE-SET,telegramcidr,PROXY",
+            "  - RULE-SET,google,PROXY",
+            "  - MATCH,DIRECT",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def is_safe_next(next_url: str) -> bool:
     if not next_url:
         return False
@@ -817,7 +1160,7 @@ def is_logged_in_session(expected_username: str) -> bool:
 @app.before_request
 def require_login():
     endpoint = request.endpoint or ""
-    if endpoint in {"login", "logout", "send_sms_code", "static", "subscription_content"}:
+    if endpoint in {"login", "logout", "send_sms_code", "static", "subscription_content", "clash_subscription_content"}:
         return None
 
     creds = get_auth_credentials(get_config_path())
@@ -1937,6 +2280,7 @@ def subscription_link():
         return jsonify({"ok": False, "message": f"Save failed: {exc}"}), 500
 
     sub_url = request.host_url.rstrip("/") + url_for("subscription_content", token=token)
+    clash_url = request.host_url.rstrip("/") + url_for("clash_subscription_content", token=token)
     message = "Subscription URL generated."
     if overwritten:
         message = "Token existed. Replaced with latest server selection."
@@ -1946,6 +2290,7 @@ def subscription_link():
             "token": token,
             "overwritten": overwritten,
             "url": sub_url,
+            "clash_url": clash_url,
             "server_count": len(selected),
             "server_ids": server_ids,
             "links": links,
@@ -2068,6 +2413,45 @@ def subscription_content(token: str):
     plain = "\n".join(links)
     encoded = base64.b64encode(plain.encode("utf-8")).decode("utf-8")
     return Response(encoded + "\n", mimetype="text/plain")
+
+
+@app.get("/sub/clash/<token>")
+def clash_subscription_content(token: str):
+    try:
+        clean_token = normalize_token(token)
+    except ValueError as exc:
+        return Response(f"invalid subscription token: {exc}\n", mimetype="text/plain"), 400
+    if not clean_token:
+        return Response("invalid subscription token: empty token\n", mimetype="text/plain"), 400
+
+    try:
+        config = load_config(get_config_path())
+        servers = config.get("servers", [])
+        subscriptions = normalize_subscriptions(config.get("subscriptions"))
+    except Exception as exc:  # noqa: BLE001
+        return Response(f"config error: {exc}\n", mimetype="text/plain"), 500
+
+    subscription = subscriptions.get(clean_token)
+    if not subscription:
+        return Response("subscription token not found\n", mimetype="text/plain"), 404
+    if is_subscription_expired(subscription):
+        return Response("subscription token expired\n", mimetype="text/plain"), 410
+
+    server_ids = subscription.get("server_ids", [])
+    selected = select_servers_by_ids(servers, server_ids)
+    if len(selected) != len(server_ids):
+        existing = {str(s.get("id", "")) for s in selected}
+        missing = [x for x in server_ids if x not in existing]
+        return Response(f"server not found: {', '.join(missing)}\n", mimetype="text/plain"), 400
+
+    try:
+        usage = collect_subscription_usage(selected, subscription.get("expires_at"))
+        payload = build_clash_subscription_yaml(clean_token, selected, subscription, usage)
+    except ValueError as exc:
+        return Response(f"build clash subscription failed: {exc}\n", mimetype="text/plain"), 400
+
+    headers = build_subscription_headers(usage, clean_token, ".yaml")
+    return Response(payload, mimetype="text/yaml", headers=headers)
 
 
 @app.get("/api/servers")
