@@ -41,6 +41,7 @@ class SubscriptionTokenManagementTests(unittest.TestCase):
         auth: dict[str, str] | None = None,
         sms_login: dict | None = None,
         servers: list[dict] | None = None,
+        traffic_cache: dict[str, object] | None = None,
     ) -> None:
         server_list = servers if servers is not None else [
             {
@@ -66,6 +67,8 @@ class SubscriptionTokenManagementTests(unittest.TestCase):
             "servers": server_list,
             "subscriptions": subscriptions,
         }
+        if traffic_cache is not None:
+            payload["traffic_cache"] = traffic_cache
         if auth is not None:
             payload["auth"] = auth
         if sms_login is not None:
@@ -335,6 +338,97 @@ class SubscriptionTokenManagementTests(unittest.TestCase):
         self.assertEqual(resp.headers.get("X-Subscription-Used"), "180")
         self.assertIn("upload=30", resp.headers.get("Subscription-Userinfo", ""))
         self.assertIn("download=150", resp.headers.get("Subscription-Userinfo", ""))
+
+    def test_clash_subscription_content_uses_recent_cached_usage(self) -> None:
+        checked_at = "2026-03-17T12:03:00Z"
+        self.write_config(
+            subscriptions={"bundle": ["hk-main"]},
+            traffic_cache={
+                "hk-main": {
+                    "checked_at": checked_at,
+                    "ok": True,
+                    "message": "Traffic usage fetched.",
+                    "interface": "eth0",
+                    "traffic_cycle_day": 1,
+                    "traffic_cycle_label": "自然月（每月 1 日）",
+                    "traffic_period_start": "2026-03-01",
+                    "traffic_period_end": "2026-03-31",
+                    "traffic_period_label": "2026-03-01 至 2026-03-31",
+                    "traffic_quota_display": "2048 GB",
+                    "traffic_quota_bytes": 2048 * 1024**3,
+                    "traffic_quota_configured": True,
+                    "traffic_rx_bytes": 120,
+                    "traffic_tx_bytes": 30,
+                    "traffic_total_bytes": 150,
+                    "traffic_rx_display": "120 B",
+                    "traffic_tx_display": "30 B",
+                    "traffic_total_display": "150 B",
+                    "traffic_data_coverage_ok": True,
+                    "traffic_remaining_bytes": (2048 * 1024**3) - 150,
+                    "traffic_remaining_display": "2048 GB",
+                    "traffic_quota_percent": 0.0,
+                    "traffic_quota_exceeded": False,
+                }
+            },
+        )
+        now = datetime.datetime(2026, 3, 17, 12, 7, tzinfo=datetime.timezone.utc)
+        with (
+            patch.object(app_module, "utc_now", return_value=now),
+            patch.object(app_module, "run_server_traffic_check") as mock_run_traffic,
+        ):
+            resp = self.client.get("/sub/clash/bundle")
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(mock_run_traffic.called)
+        body = resp.get_data(as_text=True)
+        self.assertIn("# traffic_used: 150 B", body)
+        self.assertIn(f"# traffic_checked_at: {checked_at}", body)
+
+    def test_server_traffic_api_updates_config_cache(self) -> None:
+        result = {
+            "ok": True,
+            "message": "Traffic usage fetched.",
+            "command": "ssh hk vnstat --json d 0",
+            "returncode": 0,
+            "stdout": "{}",
+            "stderr": "",
+            "interface": "eth0",
+            "traffic_cycle_day": 1,
+            "traffic_cycle_label": "自然月（每月 1 日）",
+            "traffic_period_start": "2026-03-01",
+            "traffic_period_end": "2026-03-31",
+            "traffic_period_label": "2026-03-01 至 2026-03-31",
+            "traffic_quota_display": "2048 GB",
+            "traffic_quota_bytes": 2048 * 1024**3,
+            "traffic_quota_configured": True,
+            "traffic_rx_bytes": 100,
+            "traffic_tx_bytes": 80,
+            "traffic_total_bytes": 180,
+            "traffic_rx_display": "100 B",
+            "traffic_tx_display": "80 B",
+            "traffic_total_display": "180 B",
+            "traffic_data_coverage_ok": True,
+            "traffic_remaining_bytes": (2048 * 1024**3) - 180,
+            "traffic_remaining_display": "2048 GB",
+            "traffic_quota_percent": 0.0,
+            "traffic_quota_exceeded": False,
+        }
+        checked_at = datetime.datetime(2026, 3, 17, 12, 5, tzinfo=datetime.timezone.utc)
+        with (
+            patch.object(app_module, "run_server_traffic_check", return_value=result),
+            patch.object(app_module, "utc_now", return_value=checked_at),
+        ):
+            resp = self.client.post("/api/server-traffic", json={"server_id": "hk-main"})
+
+        self.assertEqual(resp.status_code, 200)
+        body = resp.get_json()
+        self.assertEqual(body["checked_at"], "2026-03-17T12:05:00Z")
+
+        cfg = self.read_config()
+        self.assertIn("traffic_cache", cfg)
+        self.assertIn("hk-main", cfg["traffic_cache"])
+        self.assertEqual(cfg["traffic_cache"]["hk-main"]["traffic_total_bytes"], 180)
+        self.assertEqual(cfg["traffic_cache"]["hk-main"]["checked_at"], "2026-03-17T12:05:00Z")
 
     def test_subscription_content_returns_gone_when_expired(self) -> None:
         self.write_config(

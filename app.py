@@ -55,6 +55,7 @@ LOGIN_SESSION_TTL_SECONDS = 2 * 60 * 60
 SMS_DAILY_SEND_LIMIT = 2
 SMS_CODE_LENGTH = 6
 VNSTAT_DEFAULT_CYCLE_DAY = 1
+TRAFFIC_CACHE_TTL_SECONDS = 5 * 60
 TRAFFIC_QUOTA_FACTORS: dict[str, int] = {
     "B": 1,
     "KB": 1024,
@@ -98,6 +99,7 @@ def load_config(config_path: Path) -> dict[str, Any]:
     data["servers"] = servers
     data["subscriptions"] = normalize_subscriptions(data.get("subscriptions"))
     data["sms_login"] = normalize_sms_login(data.get("sms_login"))
+    data["traffic_cache"] = normalize_traffic_cache(data.get("traffic_cache"))
     return data
 
 
@@ -398,6 +400,109 @@ def normalize_subscriptions(raw_subscriptions: Any) -> dict[str, dict[str, Any]]
             "expires_at": expires_at,
         }
     return out
+
+
+def normalize_traffic_cache(raw_traffic_cache: Any) -> dict[str, dict[str, Any]]:
+    if raw_traffic_cache is None:
+        return {}
+    if not isinstance(raw_traffic_cache, dict):
+        return {}
+
+    allowed_fields = {
+        "ok",
+        "message",
+        "interface",
+        "traffic_cycle_day",
+        "traffic_cycle_label",
+        "traffic_period_start",
+        "traffic_period_end",
+        "traffic_period_label",
+        "traffic_quota_display",
+        "traffic_quota_bytes",
+        "traffic_quota_configured",
+        "traffic_rx_bytes",
+        "traffic_tx_bytes",
+        "traffic_total_bytes",
+        "traffic_rx_display",
+        "traffic_tx_display",
+        "traffic_total_display",
+        "traffic_data_coverage_ok",
+        "traffic_remaining_bytes",
+        "traffic_remaining_display",
+        "traffic_quota_percent",
+        "traffic_quota_exceeded",
+        "checked_at",
+    }
+    normalized: dict[str, dict[str, Any]] = {}
+    for raw_server_id, raw_entry in raw_traffic_cache.items():
+        server_id = str(raw_server_id).strip()
+        if not server_id or not isinstance(raw_entry, dict):
+            continue
+        checked_at = normalize_subscription_expiry(raw_entry.get("checked_at"))
+        if checked_at is None:
+            continue
+        item: dict[str, Any] = {"checked_at": checked_at}
+        for key in allowed_fields:
+            if key == "checked_at":
+                continue
+            if key in raw_entry:
+                item[key] = raw_entry[key]
+        normalized[server_id] = item
+    return normalized
+
+
+def build_traffic_cache_entry(result: dict[str, Any], checked_at: datetime.datetime | None = None) -> dict[str, Any]:
+    keys = [
+        "ok",
+        "message",
+        "interface",
+        "traffic_cycle_day",
+        "traffic_cycle_label",
+        "traffic_period_start",
+        "traffic_period_end",
+        "traffic_period_label",
+        "traffic_quota_display",
+        "traffic_quota_bytes",
+        "traffic_quota_configured",
+        "traffic_rx_bytes",
+        "traffic_tx_bytes",
+        "traffic_total_bytes",
+        "traffic_rx_display",
+        "traffic_tx_display",
+        "traffic_total_display",
+        "traffic_data_coverage_ok",
+        "traffic_remaining_bytes",
+        "traffic_remaining_display",
+        "traffic_quota_percent",
+        "traffic_quota_exceeded",
+    ]
+    entry = {"checked_at": format_utc_datetime(checked_at or utc_now())}
+    for key in keys:
+        if key in result:
+            entry[key] = result[key]
+    return entry
+
+
+def read_cached_traffic_result(
+    traffic_cache: dict[str, dict[str, Any]],
+    server_id: str,
+    now: datetime.datetime | None = None,
+    max_age_seconds: int = TRAFFIC_CACHE_TTL_SECONDS,
+) -> dict[str, Any] | None:
+    entry = traffic_cache.get(server_id)
+    if not isinstance(entry, dict):
+        return None
+    checked_at = parse_subscription_expiry_dt(entry.get("checked_at"))
+    if checked_at is None:
+        return None
+    current = now or utc_now()
+    age_seconds = (current - checked_at).total_seconds()
+    if age_seconds < 0 or age_seconds > max_age_seconds:
+        return None
+    result = dict(entry)
+    result["traffic_cache_used"] = True
+    result["checked_at"] = format_utc_datetime(checked_at)
+    return result
 
 
 def build_new_token(existing_tokens: set[str]) -> str:
@@ -831,7 +936,13 @@ def yaml_scalar(value: Any) -> str:
     return json.dumps("" if value is None else str(value), ensure_ascii=False)
 
 
-def collect_subscription_usage(selected: list[dict[str, Any]], expires_at: str | None) -> dict[str, Any]:
+def collect_subscription_usage(
+    selected: list[dict[str, Any]],
+    expires_at: str | None,
+    traffic_cache: dict[str, dict[str, Any]],
+    config_path: Path | None = None,
+    config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     if not selected:
         return {
             "ok": False,
@@ -841,24 +952,46 @@ def collect_subscription_usage(selected: list[dict[str, Any]], expires_at: str |
             "errors": [],
         }
 
-    worker_count = min(4, len(selected))
     results: list[dict[str, Any]] = []
     errors: list[str] = []
-    with ThreadPoolExecutor(max_workers=worker_count) as executor:
-        futures = {executor.submit(run_server_traffic_check, server): server for server in selected}
-        for future in as_completed(futures):
-            server = futures[future]
-            server_name = str(server.get("name", "")).strip() or str(server.get("id", "")).strip() or "unknown"
-            try:
-                item = future.result()
-            except Exception as exc:  # noqa: BLE001
-                errors.append(f"{server_name}: {exc}")
-                continue
-            if item.get("ok"):
-                results.append(item)
-                continue
-            message = str(item.get("message", "")).strip() or "流量读取失败"
-            errors.append(f"{server_name}: {message}")
+    now = utc_now()
+    stale_servers: list[dict[str, Any]] = []
+    for server in selected:
+        server_id = str(server.get("id", "")).strip()
+        cached = read_cached_traffic_result(traffic_cache, server_id, now=now)
+        if cached and cached.get("ok"):
+            results.append(cached)
+            continue
+        stale_servers.append(server)
+
+    updated_cache = False
+    if stale_servers:
+        worker_count = min(4, len(stale_servers))
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            futures = {executor.submit(run_server_traffic_check, server): server for server in stale_servers}
+            for future in as_completed(futures):
+                server = futures[future]
+                server_id = str(server.get("id", "")).strip()
+                server_name = str(server.get("name", "")).strip() or server_id or "unknown"
+                try:
+                    item = future.result()
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(f"{server_name}: {exc}")
+                    continue
+                if item.get("ok"):
+                    item["traffic_cache_used"] = False
+                    item["checked_at"] = format_utc_datetime(now)
+                    results.append(item)
+                    traffic_cache[server_id] = build_traffic_cache_entry(item, checked_at=now)
+                    updated_cache = True
+                    continue
+                message = str(item.get("message", "")).strip() or "流量读取失败"
+                errors.append(f"{server_name}: {message}")
+
+    if updated_cache and config_path is not None:
+        payload = config if isinstance(config, dict) else load_config(config_path)
+        payload["traffic_cache"] = traffic_cache
+        save_config(config_path, payload)
 
     upload = sum(int(item.get("traffic_tx_bytes", 0) or 0) for item in results)
     download = sum(int(item.get("traffic_rx_bytes", 0) or 0) for item in results)
@@ -869,6 +1002,11 @@ def collect_subscription_usage(selected: list[dict[str, Any]], expires_at: str |
     total_quota = sum(int(value or 0) for value in quota_values) if quota_values else None
     remaining = max(total_quota - used, 0) if total_quota is not None else None
     percent = round((used / total_quota) * 100, 1) if total_quota and total_quota > 0 else None
+    checked_times = []
+    for item in results:
+        checked_at = parse_subscription_expiry_dt(item.get("checked_at"))
+        if checked_at is not None:
+            checked_times.append(checked_at)
 
     expire_ts = None
     expires_dt = parse_subscription_expiry_dt(expires_at)
@@ -896,6 +1034,7 @@ def collect_subscription_usage(selected: list[dict[str, Any]], expires_at: str |
         "expire_ts": expire_ts,
         "quota_complete": quota_configured_for_all,
         "traffic_cycle_label": cycle_labels.pop() if len(cycle_labels) == 1 else "",
+        "latest_checked_at": format_utc_datetime(max(checked_times)) if checked_times else "",
     }
 
 
@@ -935,6 +1074,8 @@ def build_subscription_headers(usage: dict[str, Any], token: str, filename_suffi
             headers["X-Subscription-Traffic-Cycle"] = str(usage["traffic_cycle_label"])
         if usage.get("partial"):
             headers["X-Subscription-Partial"] = "true"
+        if usage.get("latest_checked_at"):
+            headers["X-Subscription-Traffic-Checked-At"] = str(usage["latest_checked_at"])
         userinfo = build_subscription_userinfo_header(usage)
         if userinfo:
             headers["Subscription-Userinfo"] = userinfo
@@ -959,6 +1100,8 @@ def build_clash_subscription_yaml(token: str, selected: list[dict[str, Any]], su
                 f"# traffic_used: {usage['used_display']}",
             ]
         )
+        if usage.get("latest_checked_at"):
+            lines.append(f"# traffic_checked_at: {usage['latest_checked_at']}")
         if usage.get("total_quota_display"):
             lines.append(f"# traffic_total: {usage['total_quota_display']}")
         if usage.get("remaining_display"):
@@ -2214,7 +2357,9 @@ def server_traffic():
         return jsonify({"ok": False, "message": "Missing `server_id`."}), 400
 
     try:
-        servers = load_servers(get_config_path())
+        config_path = get_config_path()
+        config = load_config(config_path)
+        servers = config.get("servers", [])
         server = find_server(servers, server_id)
     except ValueError as exc:
         return jsonify({"ok": False, "message": str(exc)}), 400
@@ -2222,6 +2367,17 @@ def server_traffic():
         return jsonify({"ok": False, "message": f"Config error: {exc}"}), 500
 
     result = run_server_traffic_check(server)
+    if result.get("ok"):
+        checked_at = utc_now()
+        result["checked_at"] = format_utc_datetime(checked_at)
+        traffic_cache = normalize_traffic_cache(config.get("traffic_cache"))
+        traffic_cache[str(server.get("id", "")).strip()] = build_traffic_cache_entry(result, checked_at=checked_at)
+        config["traffic_cache"] = traffic_cache
+        try:
+            save_config(config_path, config)
+        except Exception as exc:  # noqa: BLE001
+            result["cache_save_failed"] = True
+            result["cache_save_error"] = str(exc)
     result["server_id"] = server.get("id", "")
     status_code = 200 if result.get("ok") else 500
     if result.get("command") == "":
@@ -2445,7 +2601,13 @@ def clash_subscription_content(token: str):
         return Response(f"server not found: {', '.join(missing)}\n", mimetype="text/plain"), 400
 
     try:
-        usage = collect_subscription_usage(selected, subscription.get("expires_at"))
+        usage = collect_subscription_usage(
+            selected,
+            subscription.get("expires_at"),
+            config.get("traffic_cache", {}),
+            config_path=get_config_path(),
+            config=config,
+        )
         payload = build_clash_subscription_yaml(clean_token, selected, subscription, usage)
     except ValueError as exc:
         return Response(f"build clash subscription failed: {exc}\n", mimetype="text/plain"), 400
