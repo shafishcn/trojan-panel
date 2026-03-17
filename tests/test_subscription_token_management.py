@@ -280,20 +280,15 @@ class SubscriptionTokenManagementTests(unittest.TestCase):
         self.assertTrue(all(line.startswith("trojan://") for line in lines))
 
     def test_clash_subscription_content_returns_yaml_and_usage_headers(self) -> None:
-        create_resp = self.client.post(
-            "/api/subscription-link",
-            json={"server_ids": ["hk-main", "sg-main"], "token": "bundle"},
-        )
-        self.assertEqual(create_resp.status_code, 200)
-        self.assertTrue(create_resp.get_json()["ok"])
-
+        checked_at = "2026-03-17T12:03:00Z"
         quota_bytes = 2048 * 1024**3
-        with patch.object(
-            app_module,
-            "run_server_traffic_check",
-            side_effect=[
-                {
+        self.write_config(
+            subscriptions={"bundle": ["hk-main", "sg-main"]},
+            traffic_cache={
+                "hk-main": {
+                    "checked_at": checked_at,
                     "ok": True,
+                    "message": "Traffic usage fetched.",
                     "traffic_rx_bytes": 100,
                     "traffic_tx_bytes": 20,
                     "traffic_total_bytes": 120,
@@ -307,8 +302,10 @@ class SubscriptionTokenManagementTests(unittest.TestCase):
                     "traffic_quota_percent": 0.0,
                     "traffic_cycle_label": "自然月（每月 1 日）",
                 },
-                {
+                "sg-main": {
+                    "checked_at": checked_at,
                     "ok": True,
+                    "message": "Traffic usage fetched.",
                     "traffic_rx_bytes": 50,
                     "traffic_tx_bytes": 10,
                     "traffic_total_bytes": 60,
@@ -322,8 +319,10 @@ class SubscriptionTokenManagementTests(unittest.TestCase):
                     "traffic_quota_percent": 0.0,
                     "traffic_cycle_label": "自然月（每月 1 日）",
                 },
-            ],
-        ):
+            },
+        )
+        now = datetime.datetime(2026, 3, 17, 12, 7, tzinfo=datetime.timezone.utc)
+        with patch.object(app_module, "utc_now", return_value=now):
             resp = self.client.get("/sub/clash/bundle")
 
         self.assertEqual(resp.status_code, 200)
@@ -383,6 +382,94 @@ class SubscriptionTokenManagementTests(unittest.TestCase):
         body = resp.get_data(as_text=True)
         self.assertIn("# traffic_used: 150 B", body)
         self.assertIn(f"# traffic_checked_at: {checked_at}", body)
+
+    def test_clash_subscription_content_skips_non_ascii_cycle_header(self) -> None:
+        checked_at = "2026-03-17T12:03:00Z"
+        self.write_config(
+            subscriptions={"bundle": ["hk-main"]},
+            traffic_cache={
+                "hk-main": {
+                    "checked_at": checked_at,
+                    "ok": True,
+                    "message": "Traffic usage fetched.",
+                    "traffic_rx_bytes": 120,
+                    "traffic_tx_bytes": 30,
+                    "traffic_total_bytes": 150,
+                    "traffic_rx_display": "120 B",
+                    "traffic_tx_display": "30 B",
+                    "traffic_total_display": "150 B",
+                    "traffic_quota_bytes": 2048 * 1024**3,
+                    "traffic_quota_display": "2048 GB",
+                    "traffic_remaining_bytes": (2048 * 1024**3) - 150,
+                    "traffic_remaining_display": "2048 GB",
+                    "traffic_quota_percent": 0.0,
+                    "traffic_cycle_label": "自然月（每月 1 日）",
+                }
+            },
+        )
+        now = datetime.datetime(2026, 3, 17, 12, 7, tzinfo=datetime.timezone.utc)
+        with patch.object(app_module, "utc_now", return_value=now):
+            resp = self.client.get("/sub/clash/bundle")
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertIsNone(resp.headers.get("X-Subscription-Traffic-Cycle"))
+        self.assertIn("# traffic_cycle: 自然月（每月 1 日）", resp.get_data(as_text=True))
+
+    def test_clash_subscription_content_uses_stale_cache_and_schedules_refresh(self) -> None:
+        checked_at = "2026-03-17T12:03:00Z"
+        self.write_config(
+            subscriptions={"bundle": ["hk-main"]},
+            traffic_cache={
+                "hk-main": {
+                    "checked_at": checked_at,
+                    "ok": True,
+                    "message": "Traffic usage fetched.",
+                    "traffic_rx_bytes": 120,
+                    "traffic_tx_bytes": 30,
+                    "traffic_total_bytes": 150,
+                    "traffic_rx_display": "120 B",
+                    "traffic_tx_display": "30 B",
+                    "traffic_total_display": "150 B",
+                    "traffic_quota_bytes": 2048 * 1024**3,
+                    "traffic_quota_display": "2048 GB",
+                    "traffic_remaining_bytes": (2048 * 1024**3) - 150,
+                    "traffic_remaining_display": "2048 GB",
+                    "traffic_quota_percent": 0.0,
+                    "traffic_cycle_label": "自然月（每月 1 日）",
+                }
+            },
+        )
+        now = datetime.datetime(2026, 3, 17, 12, 15, 1, tzinfo=datetime.timezone.utc)
+        with (
+            patch.object(app_module, "utc_now", return_value=now),
+            patch.object(app_module, "run_server_traffic_check") as mock_run_traffic,
+            patch.object(app_module, "schedule_traffic_cache_refresh", return_value=True) as mock_schedule,
+        ):
+            resp = self.client.get("/sub/clash/bundle")
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(mock_run_traffic.called)
+        mock_schedule.assert_called_once()
+        body = resp.get_data(as_text=True)
+        self.assertIn("# traffic_used: 150 B", body)
+        self.assertIn("# traffic_note: 已先返回缓存流量，后台正在刷新最新数据。", body)
+
+    def test_clash_subscription_content_without_cache_schedules_refresh(self) -> None:
+        self.write_config(subscriptions={"bundle": ["hk-main"]})
+        now = datetime.datetime(2026, 3, 17, 12, 15, 1, tzinfo=datetime.timezone.utc)
+        with (
+            patch.object(app_module, "utc_now", return_value=now),
+            patch.object(app_module, "run_server_traffic_check") as mock_run_traffic,
+            patch.object(app_module, "schedule_traffic_cache_refresh", return_value=True) as mock_schedule,
+        ):
+            resp = self.client.get("/sub/clash/bundle")
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(mock_run_traffic.called)
+        mock_schedule.assert_called_once()
+        body = resp.get_data(as_text=True)
+        self.assertIn("# traffic_note: 当前无法读取节点流量信息。", body)
+        self.assertIn("# traffic_note: 已触发后台流量刷新，请稍后再次更新订阅。", body)
 
     def test_server_traffic_api_updates_config_cache(self) -> None:
         result = {

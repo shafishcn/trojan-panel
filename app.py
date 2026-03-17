@@ -72,6 +72,8 @@ TRAFFIC_QUOTA_FACTORS: dict[str, int] = {
 TRAFFIC_QUOTA_PATTERN = re.compile(r"^\s*([0-9]+(?:\.[0-9]+)?)\s*([KMGTPE]?I?B)?\s*$", re.IGNORECASE)
 SMS_LOGIN_RUNTIME: dict[str, dict[str, Any]] = {}
 SMS_LOGIN_RUNTIME_LOCK = threading.Lock()
+TRAFFIC_CACHE_REFRESHING: set[str] = set()
+TRAFFIC_CACHE_REFRESH_LOCK = threading.Lock()
 
 
 @app.context_processor
@@ -487,7 +489,7 @@ def read_cached_traffic_result(
     traffic_cache: dict[str, dict[str, Any]],
     server_id: str,
     now: datetime.datetime | None = None,
-    max_age_seconds: int = TRAFFIC_CACHE_TTL_SECONDS,
+    max_age_seconds: int | None = TRAFFIC_CACHE_TTL_SECONDS,
 ) -> dict[str, Any] | None:
     entry = traffic_cache.get(server_id)
     if not isinstance(entry, dict):
@@ -495,14 +497,102 @@ def read_cached_traffic_result(
     checked_at = parse_subscription_expiry_dt(entry.get("checked_at"))
     if checked_at is None:
         return None
-    current = now or utc_now()
-    age_seconds = (current - checked_at).total_seconds()
-    if age_seconds < 0 or age_seconds > max_age_seconds:
-        return None
+    if max_age_seconds is not None:
+        current = now or utc_now()
+        age_seconds = (current - checked_at).total_seconds()
+        if age_seconds < 0 or age_seconds > max_age_seconds:
+            return None
     result = dict(entry)
     result["traffic_cache_used"] = True
     result["checked_at"] = format_utc_datetime(checked_at)
     return result
+
+
+def refresh_traffic_cache_for_server_ids(
+    server_ids: list[str],
+    config_path: Path,
+    *,
+    config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    unique_server_ids: list[str] = []
+    seen: set[str] = set()
+    for raw_server_id in server_ids:
+        server_id = str(raw_server_id).strip()
+        if not server_id or server_id in seen:
+            continue
+        seen.add(server_id)
+        unique_server_ids.append(server_id)
+    if not unique_server_ids:
+        return {"updated": False, "updated_server_ids": [], "errors": []}
+
+    payload = config if isinstance(config, dict) else load_config(config_path)
+    servers = payload.get("servers", [])
+    selected = select_servers_by_ids(servers, unique_server_ids)
+    server_map = {str(server.get("id", "")).strip(): server for server in selected}
+    missing_ids = [server_id for server_id in unique_server_ids if server_id not in server_map]
+    errors = [f"{server_id}: server not found" for server_id in missing_ids]
+    if not server_map:
+        return {"updated": False, "updated_server_ids": [], "errors": errors}
+
+    now = utc_now()
+    updated_server_ids: list[str] = []
+    traffic_cache = normalize_traffic_cache(payload.get("traffic_cache"))
+    worker_count = min(4, len(server_map))
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        futures = {
+            executor.submit(run_server_traffic_check, server): server_id
+            for server_id, server in server_map.items()
+        }
+        for future in as_completed(futures):
+            server_id = futures[future]
+            server = server_map[server_id]
+            server_name = str(server.get("name", "")).strip() or server_id or "unknown"
+            try:
+                item = future.result()
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"{server_name}: {exc}")
+                continue
+            if item.get("ok"):
+                traffic_cache[server_id] = build_traffic_cache_entry(item, checked_at=now)
+                updated_server_ids.append(server_id)
+                continue
+            message = str(item.get("message", "")).strip() or "流量读取失败"
+            errors.append(f"{server_name}: {message}")
+
+    if updated_server_ids:
+        payload["traffic_cache"] = traffic_cache
+        save_config(config_path, payload)
+
+    return {
+        "updated": bool(updated_server_ids),
+        "updated_server_ids": updated_server_ids,
+        "errors": errors,
+    }
+
+
+def schedule_traffic_cache_refresh(server_ids: list[str], config_path: Path) -> bool:
+    pending_ids: list[str] = []
+    with TRAFFIC_CACHE_REFRESH_LOCK:
+        for raw_server_id in server_ids:
+            server_id = str(raw_server_id).strip()
+            if not server_id or server_id in TRAFFIC_CACHE_REFRESHING:
+                continue
+            TRAFFIC_CACHE_REFRESHING.add(server_id)
+            pending_ids.append(server_id)
+    if not pending_ids:
+        return False
+
+    def worker() -> None:
+        try:
+            refresh_traffic_cache_for_server_ids(pending_ids, config_path)
+        finally:
+            with TRAFFIC_CACHE_REFRESH_LOCK:
+                for server_id in pending_ids:
+                    TRAFFIC_CACHE_REFRESHING.discard(server_id)
+
+    thread = threading.Thread(target=worker, daemon=True, name="traffic-cache-refresh")
+    thread.start()
+    return True
 
 
 def build_new_token(existing_tokens: set[str]) -> str:
@@ -955,17 +1045,26 @@ def collect_subscription_usage(
     results: list[dict[str, Any]] = []
     errors: list[str] = []
     now = utc_now()
+    refresh_server_ids: list[str] = []
     stale_servers: list[dict[str, Any]] = []
+    used_stale_cache = False
     for server in selected:
         server_id = str(server.get("id", "")).strip()
         cached = read_cached_traffic_result(traffic_cache, server_id, now=now)
         if cached and cached.get("ok"):
             results.append(cached)
             continue
+        stale = read_cached_traffic_result(traffic_cache, server_id, now=now, max_age_seconds=None)
+        if stale and stale.get("ok") and config_path is not None:
+            stale["traffic_cache_stale"] = True
+            used_stale_cache = True
+            results.append(stale)
+            refresh_server_ids.append(server_id)
+            continue
         stale_servers.append(server)
 
     updated_cache = False
-    if stale_servers:
+    if stale_servers and config_path is None:
         worker_count = min(4, len(stale_servers))
         with ThreadPoolExecutor(max_workers=worker_count) as executor:
             futures = {executor.submit(run_server_traffic_check, server): server for server in stale_servers}
@@ -987,11 +1086,17 @@ def collect_subscription_usage(
                     continue
                 message = str(item.get("message", "")).strip() or "流量读取失败"
                 errors.append(f"{server_name}: {message}")
+    elif stale_servers and config_path is not None:
+        refresh_server_ids.extend(str(server.get("id", "")).strip() for server in stale_servers)
 
     if updated_cache and config_path is not None:
         payload = config if isinstance(config, dict) else load_config(config_path)
         payload["traffic_cache"] = traffic_cache
         save_config(config_path, payload)
+
+    refresh_scheduled = False
+    if refresh_server_ids and config_path is not None:
+        refresh_scheduled = schedule_traffic_cache_refresh(refresh_server_ids, config_path)
 
     upload = sum(int(item.get("traffic_tx_bytes", 0) or 0) for item in results)
     download = sum(int(item.get("traffic_rx_bytes", 0) or 0) for item in results)
@@ -1035,6 +1140,8 @@ def collect_subscription_usage(
         "quota_complete": quota_configured_for_all,
         "traffic_cycle_label": cycle_labels.pop() if len(cycle_labels) == 1 else "",
         "latest_checked_at": format_utc_datetime(max(checked_times)) if checked_times else "",
+        "refresh_scheduled": refresh_scheduled,
+        "used_stale_cache": used_stale_cache,
     }
 
 
@@ -1055,6 +1162,14 @@ def build_subscription_userinfo_header(usage: dict[str, Any]) -> str:
     return "; ".join(parts)
 
 
+def is_http_header_safe(value: Any) -> bool:
+    try:
+        str(value).encode("latin-1")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
 def build_subscription_headers(usage: dict[str, Any], token: str, filename_suffix: str) -> dict[str, str]:
     headers = {
         "profile-update-interval": "24",
@@ -1070,7 +1185,7 @@ def build_subscription_headers(usage: dict[str, Any], token: str, filename_suffi
             headers["X-Subscription-Remaining"] = str(int(usage["remaining_bytes"]))
         if usage.get("quota_percent") is not None:
             headers["X-Subscription-Used-Percent"] = str(usage["quota_percent"])
-        if usage.get("traffic_cycle_label"):
+        if usage.get("traffic_cycle_label") and is_http_header_safe(usage["traffic_cycle_label"]):
             headers["X-Subscription-Traffic-Cycle"] = str(usage["traffic_cycle_label"])
         if usage.get("partial"):
             headers["X-Subscription-Partial"] = "true"
@@ -1112,8 +1227,12 @@ def build_clash_subscription_yaml(token: str, selected: list[dict[str, Any]], su
             lines.append(f"# traffic_cycle: {usage['traffic_cycle_label']}")
         if usage.get("partial"):
             lines.append("# traffic_note: 部分节点流量读取失败，当前数据为已成功节点汇总。")
+        if usage.get("used_stale_cache"):
+            lines.append("# traffic_note: 已先返回缓存流量，后台正在刷新最新数据。")
     else:
         lines.append("# traffic_note: 当前无法读取节点流量信息。")
+        if usage.get("refresh_scheduled"):
+            lines.append("# traffic_note: 已触发后台流量刷新，请稍后再次更新订阅。")
     if usage.get("errors"):
         lines.extend(f"# traffic_error: {message}" for message in usage["errors"][:5])
 
