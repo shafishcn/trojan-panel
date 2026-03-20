@@ -42,6 +42,7 @@ class SubscriptionTokenManagementTests(unittest.TestCase):
         sms_login: dict | None = None,
         servers: list[dict] | None = None,
         traffic_cache: dict[str, object] | None = None,
+        clash_template: dict[str, str] | None = None,
     ) -> None:
         server_list = servers if servers is not None else [
             {
@@ -66,6 +67,7 @@ class SubscriptionTokenManagementTests(unittest.TestCase):
         payload = {
             "servers": server_list,
             "subscriptions": subscriptions,
+            "clash_template": clash_template or {"profile": "general", "mode": "whitelist"},
         }
         if traffic_cache is not None:
             payload["traffic_cache"] = traffic_cache
@@ -105,12 +107,18 @@ class SubscriptionTokenManagementTests(unittest.TestCase):
         self.assertEqual(body["server_ids"], ["hk-main", "sg-main"])
         self.assertEqual(len(body["links"]), 2)
         self.assertTrue(body["clash_url"].endswith("/sub/clash/teamA"))
+        self.assertEqual(body["clash_basic_url"], body["clash_url"])
+        self.assertEqual(body["clash_advanced_url"], body["clash_url"])
+        self.assertEqual(body["clash_profile"], "general")
+        self.assertEqual(body["clash_mode"], "whitelist")
 
         list_resp = self.client.get("/api/subscriptions")
         self.assertEqual(list_resp.status_code, 200)
         list_body = list_resp.get_json()
         self.assertTrue(list_body["ok"])
         self.assertEqual(list_body["count"], 1)
+        self.assertEqual(list_body["clash_template"]["profile"], "general")
+        self.assertEqual(list_body["clash_template"]["mode"], "whitelist")
         item = list_body["subscriptions"][0]
         self.assertEqual(item["token"], "teamA")
         self.assertEqual(item["server_ids"], ["hk-main", "sg-main"])
@@ -119,8 +127,24 @@ class SubscriptionTokenManagementTests(unittest.TestCase):
         self.assertIsNone(item["expires_at"])
         self.assertFalse(item["expired"])
         self.assertEqual(item["expiry_state"], "permanent")
+        self.assertEqual(item["clash_profile"], "general")
+        self.assertEqual(item["clash_mode"], "whitelist")
+        self.assertEqual(item["clash_profile_label"], "通用")
+        self.assertEqual(item["clash_mode_label"], "白名单")
         self.assertTrue(item["url"].endswith("/sub/teamA"))
         self.assertTrue(item["clash_url"].endswith("/sub/clash/teamA"))
+        self.assertEqual(item["clash_basic_url"], item["clash_url"])
+        self.assertEqual(item["clash_advanced_url"], item["clash_url"])
+
+        cfg = self.read_config()
+        self.assertEqual(
+            cfg["subscriptions"]["teamA"],
+            {
+                "server_ids": ["hk-main", "sg-main"],
+                "expires_at": None,
+            },
+        )
+        self.assertEqual(cfg["clash_template"], {"profile": "general", "mode": "whitelist"})
 
     def test_generate_with_existing_token_sets_overwritten(self) -> None:
         self.write_config(subscriptions={"teamA": ["hk-main"]})
@@ -138,8 +162,30 @@ class SubscriptionTokenManagementTests(unittest.TestCase):
         cfg = self.read_config()
         self.assertEqual(
             cfg["subscriptions"]["teamA"],
-            {"server_ids": ["sg-main"], "expires_at": None},
+            {
+                "server_ids": ["sg-main"],
+                "expires_at": None,
+            },
         )
+        self.assertEqual(cfg["clash_template"], {"profile": "general", "mode": "whitelist"})
+
+    def test_update_subscription_template(self) -> None:
+        self.write_config(subscriptions={"teamA": ["hk-main"]})
+        resp = self.client.put(
+            "/api/subscriptions/template",
+            json={"clash_profile": "desktop", "clash_mode": "blacklist"},
+        )
+        self.assertEqual(resp.status_code, 200)
+        body = resp.get_json()
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["clash_template"]["profile"], "general")
+        self.assertEqual(body["clash_template"]["mode"], "blacklist")
+        self.assertEqual(body["clash_template"]["profile_label"], "通用")
+        self.assertEqual(body["clash_template"]["mode_label"], "黑名单")
+
+        cfg = self.read_config()
+        self.assertEqual(cfg["clash_template"]["profile"], "general")
+        self.assertEqual(cfg["clash_template"]["mode"], "blacklist")
 
     def test_generate_subscription_with_expiry(self) -> None:
         expires_at = "2030-03-10T04:00:00Z"
@@ -157,7 +203,10 @@ class SubscriptionTokenManagementTests(unittest.TestCase):
         cfg = self.read_config()
         self.assertEqual(
             cfg["subscriptions"]["expiring"],
-            {"server_ids": ["hk-main"], "expires_at": expires_at},
+            {
+                "server_ids": ["hk-main"],
+                "expires_at": expires_at,
+            },
         )
 
     def test_generate_rejects_past_expiry(self) -> None:
@@ -382,6 +431,54 @@ class SubscriptionTokenManagementTests(unittest.TestCase):
         body = resp.get_data(as_text=True)
         self.assertIn("# traffic_used: 150 B", body)
         self.assertIn(f"# traffic_checked_at: {checked_at}", body)
+        self.assertIn("# edition: advanced", body)
+        self.assertIn("# template_profile: 通用", body)
+        self.assertIn("# template_mode: 白名单", body)
+
+    def test_clash_basic_subscription_content_aliases_advanced_template(self) -> None:
+        checked_at = "2026-03-17T12:03:00Z"
+        self.write_config(
+            subscriptions={
+                "bundle": {
+                    "server_ids": ["hk-main"],
+                    "expires_at": None,
+                }
+            },
+            clash_template={"profile": "mobile", "mode": "blacklist"},
+            traffic_cache={
+                "hk-main": {
+                    "checked_at": checked_at,
+                    "ok": True,
+                    "message": "Traffic usage fetched.",
+                    "traffic_rx_bytes": 120,
+                    "traffic_tx_bytes": 30,
+                    "traffic_total_bytes": 150,
+                    "traffic_rx_display": "120 B",
+                    "traffic_tx_display": "30 B",
+                    "traffic_total_display": "150 B",
+                    "traffic_quota_bytes": 2048 * 1024**3,
+                    "traffic_quota_display": "2048 GB",
+                    "traffic_remaining_bytes": (2048 * 1024**3) - 150,
+                    "traffic_remaining_display": "2048 GB",
+                    "traffic_quota_percent": 0.0,
+                    "traffic_cycle_label": "自然月（每月 1 日）",
+                }
+            },
+        )
+        now = datetime.datetime(2026, 3, 17, 12, 7, tzinfo=datetime.timezone.utc)
+        with patch.object(app_module, "utc_now", return_value=now):
+            resp = self.client.get("/sub/clash/basic/bundle")
+
+        self.assertEqual(resp.status_code, 200)
+        body = resp.get_data(as_text=True)
+        self.assertIn("# edition: advanced", body)
+        self.assertIn("# template_profile: 通用", body)
+        self.assertIn("# template_mode: 黑名单", body)
+        self.assertIn("rule-providers:", body)
+        self.assertIn("RULE-SET,reject,REJECT", body)
+        self.assertNotIn("RULE-SET,icloud,DIRECT", body)
+        self.assertNotIn("RULE-SET,apple,DIRECT", body)
+        self.assertNotIn("RULE-SET,applications,DIRECT", body)
 
     def test_clash_subscription_content_skips_non_ascii_cycle_header(self) -> None:
         checked_at = "2026-03-17T12:03:00Z"
@@ -569,6 +666,41 @@ class SubscriptionTokenManagementTests(unittest.TestCase):
         body = list_resp.get_json()
         self.assertTrue(body["ok"])
         self.assertEqual(body["count"], 1)
+
+    def test_subscription_routes_accessible_without_login_when_auth_enabled(self) -> None:
+        self.write_config(
+            subscriptions={"teamA": ["hk-main"]},
+            auth={"username": "admin", "password": "pass123"},
+            traffic_cache={
+                "hk-main": {
+                    "checked_at": "2026-03-17T12:03:00Z",
+                    "ok": True,
+                    "message": "Traffic usage fetched.",
+                    "traffic_rx_bytes": 120,
+                    "traffic_tx_bytes": 30,
+                    "traffic_total_bytes": 150,
+                    "traffic_rx_display": "120 B",
+                    "traffic_tx_display": "30 B",
+                    "traffic_total_display": "150 B",
+                    "traffic_quota_bytes": 2048 * 1024**3,
+                    "traffic_quota_display": "2048 GB",
+                    "traffic_remaining_bytes": (2048 * 1024**3) - 150,
+                    "traffic_remaining_display": "2048 GB",
+                    "traffic_quota_percent": 0.0,
+                    "traffic_cycle_label": "自然月（每月 1 日）",
+                }
+            },
+        )
+
+        trojan_resp = self.client.get("/sub/teamA", follow_redirects=False)
+        clash_resp = self.client.get("/sub/clash/teamA", follow_redirects=False)
+        clash_basic_resp = self.client.get("/sub/clash/basic/teamA", follow_redirects=False)
+        clash_advanced_resp = self.client.get("/sub/clash/advanced/teamA", follow_redirects=False)
+
+        self.assertEqual(trojan_resp.status_code, 200)
+        self.assertEqual(clash_resp.status_code, 200)
+        self.assertEqual(clash_basic_resp.status_code, 200)
+        self.assertEqual(clash_advanced_resp.status_code, 200)
 
     def test_api_requires_relogin_after_session_expires(self) -> None:
         self.write_config(
@@ -988,6 +1120,7 @@ class SubscriptionTokenManagementTests(unittest.TestCase):
         html = resp.get_data(as_text=True)
         self.assertIn("sub-manager-token-list", html)
         self.assertIn("sub-manager-refresh-btn", html)
+        self.assertIn("Clash 模板", html)
 
     def test_index_page_renders_subscription_expiry_controls(self) -> None:
         resp = self.client.get("/")

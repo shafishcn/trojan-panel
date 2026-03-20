@@ -387,6 +387,39 @@ function formatSubscriptionExpiry(expiresAt, expired) {
   return expired ? `已过期：${display}` : `截止时间：${display}`;
 }
 
+function describeClashProfile(profile) {
+  const labels = {
+    general: "通用",
+  };
+  return labels[String(profile || "").trim()] || labels.general;
+}
+
+function describeClashMode(mode) {
+  const labels = {
+    whitelist: "白名单",
+    blacklist: "黑名单",
+  };
+  return labels[String(mode || "").trim()] || labels.whitelist;
+}
+
+function buildCopyUrl(rawUrl) {
+  try {
+    const parsed = new URL(rawUrl);
+    const host = (parsed.hostname || "").trim().toLowerCase();
+    const isIPv4 = /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host);
+    const isIPv6 = host.includes(":");
+    const isLocalhost = host === "localhost";
+    const isDomain = !isIPv4 && !isIPv6 && !isLocalhost && /[a-z]/i.test(host);
+    if (isDomain) {
+      parsed.protocol = "https:";
+      return { url: parsed.toString(), forcedHttps: true };
+    }
+  } catch (_err) {
+    // Keep original URL when parsing fails.
+  }
+  return { url: rawUrl, forcedHttps: false };
+}
+
 function sortSubscriptionsForDisplay(items) {
   if (!Array.isArray(items)) return [];
   return items
@@ -899,6 +932,9 @@ function formatSubscriptionResult(data) {
   if (Array.isArray(data.server_ids) && data.server_ids.length) lines.push(`server ids: ${data.server_ids.join(", ")}`);
   if (data.expires_at !== undefined || data.expiry_state !== undefined) {
     lines.push(`expiry: ${formatSubscriptionExpiry(data.expires_at, Boolean(data.expired))}`);
+  }
+  if (data.clash_profile_label || data.clash_mode_label) {
+    lines.push(`clash template: ${data.clash_profile_label || describeClashProfile(data.clash_profile)} / ${data.clash_mode_label || describeClashMode(data.clash_mode)}`);
   }
   if (data.url) lines.push(`trojan subscription url: ${data.url}`);
   if (data.clash_url) lines.push(`clash subscription url: ${data.clash_url}`);
@@ -1668,7 +1704,11 @@ function initSubscriptionPanel() {
       const resp = await fetch("/api/subscription-link", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ server_ids: selectedIds, token, expires_at: expiryPayload.value }),
+        body: JSON.stringify({
+          server_ids: selectedIds,
+          token,
+          expires_at: expiryPayload.value,
+        }),
       });
       const data = await parseApiResponse(resp);
       if (tokenInput && data.token) tokenInput.value = String(data.token);
@@ -1686,7 +1726,32 @@ function initSubscriptionManagerPage() {
   const refreshBtn = document.querySelector("#sub-manager-refresh-btn");
   const tokenListEl = document.querySelector("#sub-manager-token-list");
   const resultEl = document.querySelector("#sub-manager-result");
-  if (!refreshBtn || !tokenListEl || !resultEl) return;
+  const modeOptionsEl = document.querySelector("#sub-manager-template-mode");
+  const saveTemplateBtn = document.querySelector("#sub-manager-template-save-btn");
+  if (!refreshBtn || !tokenListEl || !resultEl || !modeOptionsEl || !saveTemplateBtn) return;
+
+  let selectedProfile = "general";
+  let selectedMode = "whitelist";
+
+  const renderTemplateOptions = (container, values, currentValue, describe, onChange) => {
+    container.innerHTML = "";
+    for (const value of values) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "ghost-btn sub-template-btn sub-template-btn-compact";
+      btn.textContent = describe(value);
+      btn.classList.toggle("is-active", value === currentValue);
+      btn.addEventListener("click", () => onChange(value));
+      container.appendChild(btn);
+    }
+  };
+
+  const syncTemplateControls = () => {
+    renderTemplateOptions(modeOptionsEl, ["whitelist", "blacklist"], selectedMode, describeClashMode, (value) => {
+      selectedMode = value;
+      syncTemplateControls();
+    });
+  };
 
   const setListText = (text) => {
     tokenListEl.innerHTML = "";
@@ -1694,24 +1759,6 @@ function initSubscriptionManagerPage() {
     el.className = "sub-token-empty";
     el.textContent = text;
     tokenListEl.appendChild(el);
-  };
-
-  const buildCopyUrl = (rawUrl) => {
-    try {
-      const parsed = new URL(rawUrl);
-      const host = (parsed.hostname || "").trim().toLowerCase();
-      const isIPv4 = /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host);
-      const isIPv6 = host.includes(":");
-      const isLocalhost = host === "localhost";
-      const isDomain = !isIPv4 && !isIPv6 && !isLocalhost && /[a-z]/i.test(host);
-      if (isDomain) {
-        parsed.protocol = "https:";
-        return { url: parsed.toString(), forcedHttps: true };
-      }
-    } catch (_err) {
-      // Fall through and keep original URL.
-    }
-    return { url: rawUrl, forcedHttps: false };
   };
 
   const renderList = (items) => {
@@ -1865,7 +1912,7 @@ function initSubscriptionManagerPage() {
           }
           await showThemeDialog({
             title: "Clash订阅已复制",
-            message: "订阅地址已经复制到剪贴板。打开 Clash 客户端后，在配置导入或订阅管理中粘贴该地址即可同步节点与流量信息。",
+            message: "订阅地址已经复制到剪贴板。打开 Clash 客户端后，在配置导入或订阅管理中粘贴该地址即可。",
             confirmText: "知道了",
             hideCancel: true,
           });
@@ -1923,10 +1970,16 @@ function initSubscriptionManagerPage() {
         setListText(`加载失败: ${data.message || "未知错误"}`);
         return;
       }
+      const clashTemplate = typeof data.clash_template === "object" && data.clash_template ? data.clash_template : {};
+      selectedProfile = "general";
+      selectedMode = typeof clashTemplate.mode === "string" ? clashTemplate.mode : "whitelist";
+      syncTemplateControls();
       renderList(data.subscriptions);
+      markResult(resultEl, true, `已加载 ${data.count || 0} 条订阅。`);
     } catch (err) {
       if (err instanceof UnauthorizedError) return;
       setListText(`request error: ${err}`);
+      markResult(resultEl, false, `request error: ${err}`);
     } finally {
       if (restore) restore();
     }
@@ -1935,6 +1988,29 @@ function initSubscriptionManagerPage() {
   refreshBtn.addEventListener("click", async () => {
     await loadSubscriptionList(refreshBtn);
   });
+  saveTemplateBtn.addEventListener("click", async () => {
+    const restore = setButtonLoading(saveTemplateBtn, "保存中...");
+    try {
+      const resp = await fetch("/api/subscriptions/template", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clash_profile: selectedProfile, clash_mode: selectedMode }),
+      });
+      const data = await parseApiResponse(resp);
+      if (!data.ok) {
+        markResult(resultEl, false, data.message || "模板保存失败。");
+        return;
+      }
+      markResult(resultEl, true, `已更新 Clash 模式：${describeClashMode(selectedMode)}`);
+      await loadSubscriptionList();
+    } catch (err) {
+      if (err instanceof UnauthorizedError) return;
+      markResult(resultEl, false, `request error: ${err}`);
+    } finally {
+      restore();
+    }
+  });
+  syncTemplateControls();
   loadSubscriptionList();
 }
 

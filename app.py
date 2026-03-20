@@ -56,6 +56,15 @@ SMS_DAILY_SEND_LIMIT = 2
 SMS_CODE_LENGTH = 6
 VNSTAT_DEFAULT_CYCLE_DAY = 1
 TRAFFIC_CACHE_TTL_SECONDS = 5 * 60
+CLASH_DEFAULT_PROFILE = "general"
+CLASH_DEFAULT_MODE = "whitelist"
+CLASH_PROFILE_LABELS = {
+    "general": "通用",
+}
+CLASH_MODE_LABELS = {
+    "whitelist": "白名单",
+    "blacklist": "黑名单",
+}
 TRAFFIC_QUOTA_FACTORS: dict[str, int] = {
     "B": 1,
     "KB": 1024,
@@ -88,7 +97,14 @@ def inject_asset_helpers() -> dict[str, Any]:
 
 def load_config(config_path: Path) -> dict[str, Any]:
     if not config_path.exists():
-        return {"servers": [], "subscriptions": {}}
+        return {
+            "servers": [],
+            "subscriptions": {},
+            "clash_template": {
+                "profile": CLASH_DEFAULT_PROFILE,
+                "mode": CLASH_DEFAULT_MODE,
+            },
+        }
     with config_path.open("r", encoding="utf-8") as f:
         data = json.load(f)
     if not isinstance(data, dict):
@@ -100,6 +116,7 @@ def load_config(config_path: Path) -> dict[str, Any]:
         raise ValueError("Invalid config: `servers` must be a list.")
     data["servers"] = servers
     data["subscriptions"] = normalize_subscriptions(data.get("subscriptions"))
+    data["clash_template"] = normalize_clash_template_config(data.get("clash_template"))
     data["sms_login"] = normalize_sms_login(data.get("sms_login"))
     data["traffic_cache"] = normalize_traffic_cache(data.get("traffic_cache"))
     return data
@@ -377,6 +394,59 @@ def get_subscription_expiry_state(subscription: dict[str, Any], now: datetime.da
     return "expired" if is_subscription_expired(subscription, now=now) else "active"
 
 
+def normalize_clash_profile(raw_value: Any) -> str:
+    _value = str(raw_value or CLASH_DEFAULT_PROFILE).strip().lower()
+    return CLASH_DEFAULT_PROFILE
+
+
+def normalize_clash_mode(raw_value: Any) -> str:
+    value = str(raw_value or CLASH_DEFAULT_MODE).strip().lower()
+    if value not in CLASH_MODE_LABELS:
+        raise ValueError("`clash_mode` must be one of: whitelist, blacklist.")
+    return value
+
+
+def describe_clash_profile(profile: str) -> str:
+    return CLASH_PROFILE_LABELS.get(profile, CLASH_PROFILE_LABELS[CLASH_DEFAULT_PROFILE])
+
+
+def describe_clash_mode(mode: str) -> str:
+    return CLASH_MODE_LABELS.get(mode, CLASH_MODE_LABELS[CLASH_DEFAULT_MODE])
+
+
+def normalize_clash_template_config(raw_template: Any) -> dict[str, str]:
+    if raw_template is None:
+        return {
+            "profile": CLASH_DEFAULT_PROFILE,
+            "mode": CLASH_DEFAULT_MODE,
+        }
+    if not isinstance(raw_template, dict):
+        raise ValueError("`clash_template` must be an object.")
+    return {
+        "profile": CLASH_DEFAULT_PROFILE,
+        "mode": normalize_clash_mode(raw_template.get("mode")),
+    }
+
+
+def get_effective_clash_template(
+    config: dict[str, Any] | None = None,
+    subscription: dict[str, Any] | None = None,
+) -> dict[str, str]:
+    if isinstance(config, dict):
+        raw_template = config.get("clash_template")
+        if isinstance(raw_template, dict):
+            return normalize_clash_template_config(raw_template)
+    if isinstance(subscription, dict):
+        return {
+            "profile": CLASH_DEFAULT_PROFILE,
+            "mode": normalize_clash_mode(subscription.get("clash_mode")),
+        }
+    return {
+        "profile": CLASH_DEFAULT_PROFILE,
+        "mode": CLASH_DEFAULT_MODE,
+    }
+
+
 def normalize_subscriptions(raw_subscriptions: Any) -> dict[str, dict[str, Any]]:
     if raw_subscriptions is None:
         return {}
@@ -391,15 +461,21 @@ def normalize_subscriptions(raw_subscriptions: Any) -> dict[str, dict[str, Any]]
 
         value = raw_value
         expires_at = None
+        clash_profile = CLASH_DEFAULT_PROFILE
+        clash_mode = CLASH_DEFAULT_MODE
         if isinstance(raw_value, dict):
             value = raw_value.get("server_ids")
             expires_at = normalize_subscription_expiry(raw_value.get("expires_at"))
+            clash_profile = normalize_clash_profile(raw_value.get("clash_profile"))
+            clash_mode = normalize_clash_mode(raw_value.get("clash_mode"))
         if not isinstance(value, list):
             raise ValueError(f"Subscription `{token}` must be a list or object.")
         server_ids = normalize_server_id_list(value)
         out[token] = {
             "server_ids": server_ids,
             "expires_at": expires_at,
+            "clash_profile": clash_profile,
+            "clash_mode": clash_mode,
         }
     return out
 
@@ -606,16 +682,28 @@ def build_new_token(existing_tokens: set[str]) -> str:
             return token
 
 
-def clean_subscription_view(token: str, subscription: dict[str, Any], server_name_by_id: dict[str, str], sub_url: str) -> dict[str, Any]:
+def clean_subscription_view(
+    token: str,
+    subscription: dict[str, Any],
+    server_name_by_id: dict[str, str],
+    sub_url: str,
+    *,
+    config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     server_ids = list(subscription.get("server_ids", []))
     missing_server_ids = [x for x in server_ids if x not in server_name_by_id]
     expires_at = subscription.get("expires_at")
     expiry_state = get_subscription_expiry_state(subscription)
     clash_url = request.host_url.rstrip("/") + url_for("clash_subscription_content", token=token)
+    clash_template = get_effective_clash_template(config=config, subscription=subscription)
+    clash_profile = clash_template["profile"]
+    clash_mode = clash_template["mode"]
     return {
         "token": token,
         "url": sub_url,
         "clash_url": clash_url,
+        "clash_basic_url": clash_url,
+        "clash_advanced_url": clash_url,
         "server_ids": server_ids,
         "server_count": len(server_ids),
         "server_names": [server_name_by_id[x] for x in server_ids if x in server_name_by_id],
@@ -623,6 +711,10 @@ def clean_subscription_view(token: str, subscription: dict[str, Any], server_nam
         "expires_at": expires_at,
         "expired": expiry_state == "expired",
         "expiry_state": expiry_state,
+        "clash_profile": clash_profile,
+        "clash_profile_label": describe_clash_profile(clash_profile),
+        "clash_mode": clash_mode,
+        "clash_mode_label": describe_clash_mode(clash_mode),
     }
 
 
@@ -1197,15 +1289,26 @@ def build_subscription_headers(usage: dict[str, Any], token: str, filename_suffi
     return headers
 
 
-def build_clash_subscription_yaml(token: str, selected: list[dict[str, Any]], subscription: dict[str, Any], usage: dict[str, Any]) -> str:
-    proxies = build_clash_proxy_items(selected)
-    proxy_names = [item["name"] for item in proxies]
+def build_clash_subscription_comment_lines(
+    token: str,
+    selected: list[dict[str, Any]],
+    subscription: dict[str, Any],
+    clash_template: dict[str, str],
+    usage: dict[str, Any],
+    *,
+    edition: str,
+) -> list[str]:
+    clash_profile = normalize_clash_profile(clash_template.get("profile"))
+    clash_mode = normalize_clash_mode(clash_template.get("mode"))
     now_text = format_utc_datetime(utc_now())
     lines = [
-        f"# Trojan Panel Clash subscription",
+        "# Trojan Panel Clash subscription",
+        f"# edition: {edition}",
         f"# token: {token}",
         f"# generated_at: {now_text}",
-        f"# server_count: {len(proxies)}",
+        f"# server_count: {len(selected)}",
+        f"# template_profile: {describe_clash_profile(clash_profile)}",
+        f"# template_mode: {describe_clash_mode(clash_mode)}",
     ]
     if usage.get("ok"):
         lines.extend(
@@ -1239,12 +1342,11 @@ def build_clash_subscription_yaml(token: str, selected: list[dict[str, Any]], su
     expires_at = subscription.get("expires_at")
     if expires_at:
         lines.append(f"# expires_at: {expires_at}")
+    return lines
 
-    lines.extend(
-        [
-            "proxies:",
-        ]
-    )
+
+def build_clash_proxy_lines(proxies: list[dict[str, Any]]) -> list[str]:
+    lines = ["proxies:"]
     for item in proxies:
         lines.extend(
             [
@@ -1258,6 +1360,86 @@ def build_clash_subscription_yaml(token: str, selected: list[dict[str, Any]], su
                 f"    skip-cert-verify: {yaml_scalar(item['skip_cert_verify'])}",
             ]
         )
+    return lines
+
+
+def build_clash_basic_subscription_yaml(
+    token: str,
+    selected: list[dict[str, Any]],
+    subscription: dict[str, Any],
+    clash_template: dict[str, str],
+    usage: dict[str, Any],
+) -> str:
+    proxies = build_clash_proxy_items(selected)
+    proxy_names = [item["name"] for item in proxies]
+    clash_mode = normalize_clash_mode(clash_template.get("mode"))
+    lines = build_clash_subscription_comment_lines(token, selected, subscription, clash_template, usage, edition="basic")
+    lines.extend(
+        [
+            "",
+            "mixed-port: 7890",
+            "allow-lan: true",
+            "mode: rule",
+            "log-level: info",
+            "ipv6: true",
+            "",
+        ]
+    )
+    lines.extend(build_clash_proxy_lines(proxies))
+    lines.extend(
+        [
+            "",
+            "proxy-groups:",
+            "  - name: \"PROXY\"",
+            "    type: select",
+            "    proxies:",
+        ]
+    )
+    for name in proxy_names:
+        lines.append(f"    - {name}")
+    lines.extend(
+        [
+            "",
+            "  - name: \"FINAL\"",
+            "    type: select",
+            "    proxies:",
+            "    - PROXY",
+            "    - DIRECT",
+            "",
+            "rules:",
+            "  - DOMAIN,clash.razord.top,DIRECT",
+            "  - DOMAIN,yacd.haishan.me,DIRECT",
+            "  - GEOIP,LAN,DIRECT",
+            "  - GEOIP,CN,DIRECT",
+            "",
+        ]
+    )
+    if clash_mode == "whitelist":
+        lines.append("  - MATCH,PROXY")
+    else:
+        lines.extend(
+            [
+                "  - DOMAIN-KEYWORD,google,PROXY",
+                "  - DOMAIN-KEYWORD,telegram,PROXY",
+                "  - MATCH,DIRECT",
+            ]
+        )
+    return "\n".join(lines)
+
+
+def build_clash_subscription_yaml(
+    token: str,
+    selected: list[dict[str, Any]],
+    subscription: dict[str, Any],
+    clash_template: dict[str, str],
+    usage: dict[str, Any],
+) -> str:
+    proxies = build_clash_proxy_items(selected)
+    proxy_names = [item["name"] for item in proxies]
+    clash_profile = normalize_clash_profile(clash_template.get("profile"))
+    clash_mode = normalize_clash_mode(clash_template.get("mode"))
+    lines = build_clash_subscription_comment_lines(token, selected, subscription, clash_template, usage, edition="advanced")
+    lines.extend(build_clash_proxy_lines(proxies))
 
     lines.extend(
         [
@@ -1367,19 +1549,44 @@ def build_clash_subscription_yaml(token: str, selected: list[dict[str, Any]], su
             "    interval: 86400",
             "",
             "rules:",
-            "  - RULE-SET,applications,DIRECT",
             "  - DOMAIN,clash.razord.top,DIRECT",
             "  - DOMAIN,yacd.haishan.me,DIRECT",
             "  - RULE-SET,private,DIRECT",
             "  - RULE-SET,reject,REJECT",
-            "  - RULE-SET,tld-not-cn,PROXY",
-            "  - RULE-SET,gfw,PROXY",
-            "  - RULE-SET,telegramcidr,PROXY",
-            "  - RULE-SET,google,PROXY",
-            "  - MATCH,DIRECT",
-            "",
         ]
     )
+
+    if clash_mode == "whitelist":
+        lines.extend(
+            [
+                "  - RULE-SET,google,PROXY",
+                "  - RULE-SET,proxy,PROXY",
+                "  - RULE-SET,gfw,PROXY",
+                "  - RULE-SET,tld-not-cn,PROXY",
+                "  - RULE-SET,telegramcidr,PROXY",
+                "  - RULE-SET,direct,DIRECT",
+                "  - RULE-SET,lancidr,DIRECT",
+                "  - RULE-SET,cncidr,DIRECT",
+                "  - GEOIP,CN,DIRECT",
+                "  - MATCH,PROXY",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                "  - RULE-SET,google,PROXY",
+                "  - RULE-SET,gfw,PROXY",
+                "  - RULE-SET,tld-not-cn,PROXY",
+                "  - RULE-SET,proxy,PROXY",
+                "  - RULE-SET,telegramcidr,PROXY",
+                "  - RULE-SET,direct,DIRECT",
+                "  - RULE-SET,lancidr,DIRECT",
+                "  - RULE-SET,cncidr,DIRECT",
+                "  - GEOIP,CN,DIRECT",
+                "  - MATCH,DIRECT",
+            ]
+        )
+    lines.append("")
     return "\n".join(lines)
 
 
@@ -1391,6 +1598,29 @@ def is_safe_next(next_url: str) -> bool:
     if next_url.startswith("//"):
         return False
     return True
+
+
+def resolve_subscription_request(token: str) -> tuple[str, dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
+    clean_token = normalize_token(token)
+    if not clean_token:
+        raise ValueError("invalid subscription token: empty token")
+
+    config = load_config(get_config_path())
+    servers = config.get("servers", [])
+    subscriptions = normalize_subscriptions(config.get("subscriptions"))
+    subscription = subscriptions.get(clean_token)
+    if not subscription:
+        raise LookupError("subscription token not found")
+    if is_subscription_expired(subscription):
+        raise PermissionError("subscription token expired")
+
+    server_ids = subscription.get("server_ids", [])
+    selected = select_servers_by_ids(servers, server_ids)
+    if len(selected) != len(server_ids):
+        existing = {str(s.get("id", "")) for s in selected}
+        missing = [x for x in server_ids if x not in existing]
+        raise RuntimeError(f"server not found: {', '.join(missing)}")
+    return clean_token, config, subscription, selected
 
 
 def get_session_display_user() -> str:
@@ -1422,7 +1652,16 @@ def is_logged_in_session(expected_username: str) -> bool:
 @app.before_request
 def require_login():
     endpoint = request.endpoint or ""
-    if endpoint in {"login", "logout", "send_sms_code", "static", "subscription_content", "clash_subscription_content"}:
+    if endpoint in {
+        "login",
+        "logout",
+        "send_sms_code",
+        "static",
+        "subscription_content",
+        "clash_subscription_content",
+        "clash_subscription_advanced_content",
+        "clash_subscription_basic_content",
+    }:
         return None
 
     creds = get_auth_credentials(get_config_path())
@@ -2544,6 +2783,9 @@ def subscription_link():
     existing_tokens = set(subscriptions.keys())
     token = custom_token or build_new_token(existing_tokens)
     overwritten = token in subscriptions
+    clash_template = get_effective_clash_template(config=config)
+    clash_profile = clash_template["profile"]
+    clash_mode = clash_template["mode"]
     subscriptions[token] = {
         "server_ids": server_ids,
         "expires_at": expires_at,
@@ -2566,6 +2808,8 @@ def subscription_link():
             "overwritten": overwritten,
             "url": sub_url,
             "clash_url": clash_url,
+            "clash_basic_url": clash_url,
+            "clash_advanced_url": clash_url,
             "server_count": len(selected),
             "server_ids": server_ids,
             "links": links,
@@ -2573,6 +2817,10 @@ def subscription_link():
             "expires_at": expires_at,
             "expired": False,
             "expiry_state": "permanent" if expires_at is None else "active",
+            "clash_profile": clash_profile,
+            "clash_profile_label": describe_clash_profile(clash_profile),
+            "clash_mode": clash_mode,
+            "clash_mode_label": describe_clash_mode(clash_mode),
         }
     )
 
@@ -2605,9 +2853,58 @@ def list_subscriptions():
     for token in ordered_tokens:
         subscription = subscriptions[token]
         sub_url = request.host_url.rstrip("/") + url_for("subscription_content", token=token)
-        out.append(clean_subscription_view(token, subscription, server_name_by_id, sub_url))
+        out.append(clean_subscription_view(token, subscription, server_name_by_id, sub_url, config=config))
 
-    return jsonify({"ok": True, "subscriptions": out, "count": len(out)})
+    return jsonify(
+        {
+            "ok": True,
+            "subscriptions": out,
+            "count": len(out),
+            "clash_template": {
+                "profile": config["clash_template"]["profile"],
+                "profile_label": describe_clash_profile(config["clash_template"]["profile"]),
+                "mode": config["clash_template"]["mode"],
+                "mode_label": describe_clash_mode(config["clash_template"]["mode"]),
+            },
+        }
+    )
+
+
+@app.put("/api/subscriptions/template")
+def update_subscription_template():
+    payload = request.get_json(silent=True) or {}
+    try:
+        clash_profile = normalize_clash_profile(payload.get("clash_profile"))
+        clash_mode = normalize_clash_mode(payload.get("clash_mode"))
+    except ValueError as exc:
+        return jsonify({"ok": False, "message": str(exc)}), 400
+
+    config_path = get_config_path()
+    try:
+        config = load_config(config_path)
+    except ValueError as exc:
+        return jsonify({"ok": False, "message": str(exc)}), 400
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"ok": False, "message": f"Config error: {exc}"}), 500
+
+    config["clash_template"] = {"profile": clash_profile, "mode": clash_mode}
+    try:
+        save_config(config_path, config)
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"ok": False, "message": f"Save failed: {exc}"}), 500
+
+    return jsonify(
+        {
+            "ok": True,
+            "message": "Clash template updated.",
+            "clash_template": {
+                "profile": clash_profile,
+                "profile_label": describe_clash_profile(clash_profile),
+                "mode": clash_mode,
+                "mode_label": describe_clash_mode(clash_mode),
+            },
+        }
+    )
 
 
 @app.delete("/api/subscriptions/<token>")
@@ -2654,31 +2951,17 @@ def delete_subscription(token: str):
 @app.get("/sub/<token>")
 def subscription_content(token: str):
     try:
-        clean_token = normalize_token(token)
-    except ValueError as exc:
-        return Response(f"invalid subscription token: {exc}\n", mimetype="text/plain"), 400
-    if not clean_token:
-        return Response("invalid subscription token: empty token\n", mimetype="text/plain"), 400
-
-    try:
-        config = load_config(get_config_path())
-        servers = config.get("servers", [])
-        subscriptions = normalize_subscriptions(config.get("subscriptions"))
+        clean_token, _config, _subscription, selected = resolve_subscription_request(token)
     except Exception as exc:  # noqa: BLE001
+        if isinstance(exc, ValueError):
+            return Response(f"{exc}\n", mimetype="text/plain"), 400
+        if isinstance(exc, LookupError):
+            return Response(f"{exc}\n", mimetype="text/plain"), 404
+        if isinstance(exc, PermissionError):
+            return Response(f"{exc}\n", mimetype="text/plain"), 410
+        if isinstance(exc, RuntimeError):
+            return Response(f"{exc}\n", mimetype="text/plain"), 400
         return Response(f"config error: {exc}\n", mimetype="text/plain"), 500
-
-    subscription = subscriptions.get(clean_token)
-    if not subscription:
-        return Response("subscription token not found\n", mimetype="text/plain"), 404
-    if is_subscription_expired(subscription):
-        return Response("subscription token expired\n", mimetype="text/plain"), 410
-    server_ids = subscription.get("server_ids", [])
-
-    selected = select_servers_by_ids(servers, server_ids)
-    if len(selected) != len(server_ids):
-        existing = {str(s.get("id", "")) for s in selected}
-        missing = [x for x in server_ids if x not in existing]
-        return Response(f"server not found: {', '.join(missing)}\n", mimetype="text/plain"), 400
 
     try:
         links = build_subscription_links(selected)
@@ -2690,36 +2973,22 @@ def subscription_content(token: str):
     return Response(encoded + "\n", mimetype="text/plain")
 
 
-@app.get("/sub/clash/<token>")
-def clash_subscription_content(token: str):
+def respond_clash_subscription(token: str, edition: str) -> Response:
     try:
-        clean_token = normalize_token(token)
-    except ValueError as exc:
-        return Response(f"invalid subscription token: {exc}\n", mimetype="text/plain"), 400
-    if not clean_token:
-        return Response("invalid subscription token: empty token\n", mimetype="text/plain"), 400
-
-    try:
-        config = load_config(get_config_path())
-        servers = config.get("servers", [])
-        subscriptions = normalize_subscriptions(config.get("subscriptions"))
+        clean_token, config, subscription, selected = resolve_subscription_request(token)
     except Exception as exc:  # noqa: BLE001
+        if isinstance(exc, ValueError):
+            return Response(f"{exc}\n", mimetype="text/plain"), 400
+        if isinstance(exc, LookupError):
+            return Response(f"{exc}\n", mimetype="text/plain"), 404
+        if isinstance(exc, PermissionError):
+            return Response(f"{exc}\n", mimetype="text/plain"), 410
+        if isinstance(exc, RuntimeError):
+            return Response(f"{exc}\n", mimetype="text/plain"), 400
         return Response(f"config error: {exc}\n", mimetype="text/plain"), 500
 
-    subscription = subscriptions.get(clean_token)
-    if not subscription:
-        return Response("subscription token not found\n", mimetype="text/plain"), 404
-    if is_subscription_expired(subscription):
-        return Response("subscription token expired\n", mimetype="text/plain"), 410
-
-    server_ids = subscription.get("server_ids", [])
-    selected = select_servers_by_ids(servers, server_ids)
-    if len(selected) != len(server_ids):
-        existing = {str(s.get("id", "")) for s in selected}
-        missing = [x for x in server_ids if x not in existing]
-        return Response(f"server not found: {', '.join(missing)}\n", mimetype="text/plain"), 400
-
     try:
+        clash_template = get_effective_clash_template(config=config, subscription=subscription)
         usage = collect_subscription_usage(
             selected,
             subscription.get("expires_at"),
@@ -2727,12 +2996,27 @@ def clash_subscription_content(token: str):
             config_path=get_config_path(),
             config=config,
         )
-        payload = build_clash_subscription_yaml(clean_token, selected, subscription, usage)
+        payload = build_clash_subscription_yaml(clean_token, selected, subscription, clash_template, usage)
     except ValueError as exc:
         return Response(f"build clash subscription failed: {exc}\n", mimetype="text/plain"), 400
 
     headers = build_subscription_headers(usage, clean_token, ".yaml")
     return Response(payload, mimetype="text/yaml", headers=headers)
+
+
+@app.get("/sub/clash/<token>")
+def clash_subscription_content(token: str):
+    return respond_clash_subscription(token, "advanced")
+
+
+@app.get("/sub/clash/advanced/<token>")
+def clash_subscription_advanced_content(token: str):
+    return respond_clash_subscription(token, "advanced")
+
+
+@app.get("/sub/clash/basic/<token>")
+def clash_subscription_basic_content(token: str):
+    return respond_clash_subscription(token, "basic")
 
 
 @app.get("/api/servers")

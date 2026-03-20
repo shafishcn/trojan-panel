@@ -1225,6 +1225,129 @@ body.has-modal-open {
   gap: 14px;
 }
 
+.sub-template-panel {
+  border: 1px solid rgba(74, 66, 54, 0.14);
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, rgba(199, 110, 57, 0.08), rgba(199, 110, 57, 0) 28%),
+    rgba(255, 251, 244, 0.82);
+  padding: 16px;
+  display: grid;
+  gap: 14px;
+}
+
+.sub-template-copy h3 {
+  margin: 0 0 4px;
+  font-size: 0.98rem;
+}
+
+.sub-template-copy p {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.86rem;
+}
+
+.sub-template-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.sub-template-group {
+  display: grid;
+  gap: 8px;
+}
+
+.sub-template-label {
+  color: #5f6f89;
+  font-size: 0.83rem;
+  font-weight: 700;
+}
+
+.sub-template-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sub-template-btn {
+  min-height: 42px;
+  padding: 8px 12px;
+}
+
+.sub-template-btn-compact {
+  min-height: 34px;
+  padding: 6px 10px;
+  font-size: 0.8rem;
+}
+
+.sub-template-btn.is-active {
+  border-color: rgba(26, 83, 110, 0.56);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0) 36%),
+    linear-gradient(180deg, #1e546f, #16384f);
+  color: #f8f4eb;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    inset 0 -3px 0 rgba(201, 105, 59, 0.42),
+    0 10px 18px rgba(24, 35, 50, 0.12);
+}
+
+.sub-template-hint {
+  margin: 0;
+  color: #6d5f49;
+  font-size: 0.82rem;
+}
+
+.sub-template-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  margin-bottom: 18px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(144, 123, 93, 0.18);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.42), rgba(255, 255, 255, 0) 34%),
+    rgba(255, 250, 243, 0.9);
+}
+
+.sub-template-toolbar-title {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.88rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.sub-template-toolbar-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.sub-template-toolbar-label {
+  color: #5f6f89;
+  font-size: 0.78rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.sub-template-toolbar-options {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sub-template-toolbar-save {
+  min-height: 34px;
+  margin-left: auto;
+  padding: 6px 12px;
+}
+
 .sub-expiry-copy h3 {
   margin: 0 0 4px;
   font-size: 0.98rem;
@@ -2198,6 +2321,10 @@ body.has-modal-open {
 
   .sub-expiry-controls {
     align-items: stretch;
+  }
+
+  .sub-template-grid {
+    grid-template-columns: 1fr;
   }
 
   .sub-expiry-custom {

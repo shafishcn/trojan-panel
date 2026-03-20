@@ -47,12 +47,21 @@
       <div class="config-head">
         <div>
           <h2>已保存订阅</h2>
-          <p>可查看生效状态、有效期，复制 Trojan 或 Clash 订阅链接，或跳转回操作页进行覆盖更新。</p>
+          <p>可查看生效状态、有效期，复制 V2rayN订阅或 Clash订阅链接。顶部可统一切换 Clash 分流模式，所有订阅通用。</p>
         </div>
         <div class="config-actions">
           <button id="sub-manager-refresh-btn" class="ghost-btn" type="button">刷新列表</button>
         </div>
       </div>
+
+      <section class="sub-template-toolbar" aria-labelledby="sub-template-toolbar-title">
+        <p id="sub-template-toolbar-title" class="sub-template-toolbar-title">Clash 模板</p>
+        <div class="sub-template-toolbar-group" aria-label="分流模式">
+          <span class="sub-template-toolbar-label">模式</span>
+          <div id="sub-manager-template-mode" class="sub-template-toolbar-options"></div>
+        </div>
+        <button id="sub-manager-template-save-btn" class="ghost-btn sub-template-toolbar-save" type="button">保存</button>
+      </section>
 
       <div id="sub-manager-token-list" class="sub-token-list">
         <p class="sub-token-empty">正在加载订阅列表...</p>
