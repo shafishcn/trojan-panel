@@ -19,7 +19,16 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-from flask import Flask, Response, jsonify, redirect, render_template, request, session, url_for
+from flask import (
+    Flask,
+    Response,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    session,
+    url_for,
+)
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -78,7 +87,9 @@ TRAFFIC_QUOTA_FACTORS: dict[str, int] = {
     "PB": 1024**5,
     "PIB": 1024**5,
 }
-TRAFFIC_QUOTA_PATTERN = re.compile(r"^\s*([0-9]+(?:\.[0-9]+)?)\s*([KMGTPE]?I?B)?\s*$", re.IGNORECASE)
+TRAFFIC_QUOTA_PATTERN = re.compile(
+    r"^\s*([0-9]+(?:\.[0-9]+)?)\s*([KMGTPE]?I?B)?\s*$", re.IGNORECASE
+)
 SMS_LOGIN_RUNTIME: dict[str, dict[str, Any]] = {}
 SMS_LOGIN_RUNTIME_LOCK = threading.Lock()
 TRAFFIC_CACHE_REFRESHING: set[str] = set()
@@ -89,7 +100,11 @@ TRAFFIC_CACHE_REFRESH_LOCK = threading.Lock()
 def inject_asset_helpers() -> dict[str, Any]:
     def asset_url(filename: str) -> str:
         static_path = BASE_DIR / "static" / filename
-        version = int(static_path.stat().st_mtime_ns) if static_path.exists() else int(time.time() * 1_000_000_000)
+        version = (
+            int(static_path.stat().st_mtime_ns)
+            if static_path.exists()
+            else int(time.time() * 1_000_000_000)
+        )
         return url_for("static", filename=filename, v=version)
 
     return {"asset_url": asset_url}
@@ -194,7 +209,9 @@ def parse_traffic_cycle_day(raw_cycle_day: Any) -> int:
     try:
         cycle_day = int(raw_cycle_day)
     except (TypeError, ValueError) as exc:
-        raise ValueError("`traffic_cycle_day` must be an integer between 1 and 31.") from exc
+        raise ValueError(
+            "`traffic_cycle_day` must be an integer between 1 and 31."
+        ) from exc
     if cycle_day < 1 or cycle_day > 31:
         raise ValueError("`traffic_cycle_day` must be an integer between 1 and 31.")
     return cycle_day
@@ -213,7 +230,9 @@ def normalize_traffic_quota(raw_quota: Any) -> tuple[str, int | None]:
     if isinstance(raw_quota, str) and not raw_quota.strip():
         return "", None
     if isinstance(raw_quota, bool):
-        raise ValueError("`traffic_quota` must be a number or string with unit such as `2048 GB`.")
+        raise ValueError(
+            "`traffic_quota` must be a number or string with unit such as `2048 GB`."
+        )
 
     if isinstance(raw_quota, (int, float)):
         bytes_value = int(raw_quota)
@@ -284,7 +303,12 @@ def utc_now() -> datetime.datetime:
 
 
 def format_utc_datetime(value: datetime.datetime) -> str:
-    return value.astimezone(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return (
+        value.astimezone(datetime.timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
 
 def month_last_day(year: int, month: int) -> int:
@@ -304,7 +328,9 @@ def build_cycle_anchor(year: int, month: int, cycle_day: int) -> datetime.date:
     return datetime.date(year, month, clamp_month_day(year, month, cycle_day))
 
 
-def get_traffic_cycle_window(today: datetime.date, cycle_day: int) -> tuple[datetime.date, datetime.date]:
+def get_traffic_cycle_window(
+    today: datetime.date, cycle_day: int
+) -> tuple[datetime.date, datetime.date]:
     current_anchor = build_cycle_anchor(today.year, today.month, cycle_day)
     if today >= current_anchor:
         start = current_anchor
@@ -379,7 +405,9 @@ def normalize_subscription_expiry(raw_expires_at: Any) -> str | None:
     return format_utc_datetime(parsed)
 
 
-def is_subscription_expired(subscription: dict[str, Any], now: datetime.datetime | None = None) -> bool:
+def is_subscription_expired(
+    subscription: dict[str, Any], now: datetime.datetime | None = None
+) -> bool:
     expires_at = subscription.get("expires_at")
     expires_dt = parse_subscription_expiry_dt(expires_at)
     if expires_dt is None:
@@ -388,7 +416,9 @@ def is_subscription_expired(subscription: dict[str, Any], now: datetime.datetime
     return current >= expires_dt
 
 
-def get_subscription_expiry_state(subscription: dict[str, Any], now: datetime.datetime | None = None) -> str:
+def get_subscription_expiry_state(
+    subscription: dict[str, Any], now: datetime.datetime | None = None
+) -> str:
     if not subscription.get("expires_at"):
         return "permanent"
     return "expired" if is_subscription_expired(subscription, now=now) else "active"
@@ -407,7 +437,9 @@ def normalize_clash_mode(raw_value: Any) -> str:
 
 
 def describe_clash_profile(profile: str) -> str:
-    return CLASH_PROFILE_LABELS.get(profile, CLASH_PROFILE_LABELS[CLASH_DEFAULT_PROFILE])
+    return CLASH_PROFILE_LABELS.get(
+        profile, CLASH_PROFILE_LABELS[CLASH_DEFAULT_PROFILE]
+    )
 
 
 def describe_clash_mode(mode: str) -> str:
@@ -529,7 +561,9 @@ def normalize_traffic_cache(raw_traffic_cache: Any) -> dict[str, dict[str, Any]]
     return normalized
 
 
-def build_traffic_cache_entry(result: dict[str, Any], checked_at: datetime.datetime | None = None) -> dict[str, Any]:
+def build_traffic_cache_entry(
+    result: dict[str, Any], checked_at: datetime.datetime | None = None
+) -> dict[str, Any]:
     keys = [
         "ok",
         "message",
@@ -605,7 +639,9 @@ def refresh_traffic_cache_for_server_ids(
     servers = payload.get("servers", [])
     selected = select_servers_by_ids(servers, unique_server_ids)
     server_map = {str(server.get("id", "")).strip(): server for server in selected}
-    missing_ids = [server_id for server_id in unique_server_ids if server_id not in server_map]
+    missing_ids = [
+        server_id for server_id in unique_server_ids if server_id not in server_map
+    ]
     errors = [f"{server_id}: server not found" for server_id in missing_ids]
     if not server_map:
         return {"updated": False, "updated_server_ids": [], "errors": errors}
@@ -629,7 +665,9 @@ def refresh_traffic_cache_for_server_ids(
                 errors.append(f"{server_name}: {exc}")
                 continue
             if item.get("ok"):
-                traffic_cache[server_id] = build_traffic_cache_entry(item, checked_at=now)
+                traffic_cache[server_id] = build_traffic_cache_entry(
+                    item, checked_at=now
+                )
                 updated_server_ids.append(server_id)
                 continue
             message = str(item.get("message", "")).strip() or "流量读取失败"
@@ -694,8 +732,12 @@ def clean_subscription_view(
     missing_server_ids = [x for x in server_ids if x not in server_name_by_id]
     expires_at = subscription.get("expires_at")
     expiry_state = get_subscription_expiry_state(subscription)
-    clash_url = request.host_url.rstrip("/") + url_for("clash_subscription_content", token=token)
-    clash_template = get_effective_clash_template(config=config, subscription=subscription)
+    clash_url = request.host_url.rstrip("/") + url_for(
+        "clash_subscription_content", token=token
+    )
+    clash_template = get_effective_clash_template(
+        config=config, subscription=subscription
+    )
     clash_profile = clash_template["profile"]
     clash_mode = clash_template["mode"]
     return {
@@ -706,7 +748,9 @@ def clean_subscription_view(
         "clash_advanced_url": clash_url,
         "server_ids": server_ids,
         "server_count": len(server_ids),
-        "server_names": [server_name_by_id[x] for x in server_ids if x in server_name_by_id],
+        "server_names": [
+            server_name_by_id[x] for x in server_ids if x in server_name_by_id
+        ],
         "missing_server_ids": missing_server_ids,
         "expires_at": expires_at,
         "expired": expiry_state == "expired",
@@ -766,8 +810,14 @@ def clean_auth_view(config: dict[str, Any]) -> dict[str, str]:
     raw_auth = config.get("auth")
     if not isinstance(raw_auth, dict):
         return {"username": "", "password": ""}
-    username = str(raw_auth.get("username")).strip() if raw_auth.get("username") is not None else ""
-    password = str(raw_auth.get("password")) if raw_auth.get("password") is not None else ""
+    username = (
+        str(raw_auth.get("username")).strip()
+        if raw_auth.get("username") is not None
+        else ""
+    )
+    password = (
+        str(raw_auth.get("password")) if raw_auth.get("password") is not None else ""
+    )
     return {"username": username, "password": password}
 
 
@@ -808,7 +858,9 @@ def normalize_sms_login(raw_sms_login: Any) -> dict[str, Any] | None:
         if phone in seen_phones:
             continue
         if len(phone) < 6 or len(phone) > 15:
-            raise ValueError(f"`sms_login.allowed_phones` contains invalid phone: {raw_phone}")
+            raise ValueError(
+                f"`sms_login.allowed_phones` contains invalid phone: {raw_phone}"
+            )
         allowed_phones.append(phone)
         seen_phones.add(phone)
 
@@ -817,10 +869,17 @@ def normalize_sms_login(raw_sms_login: Any) -> dict[str, Any] | None:
         "access_key_secret": "",
         "sign_name": "",
         "template_code": "",
-        "template_param": "{\"code\":\"##code##\",\"min\":\"##min##\"}",
+        "template_param": '{"code":"##code##","min":"##min##"}',
         "endpoint": "dypnsapi.aliyuncs.com",
     }
-    for key in ("access_key_id", "access_key_secret", "sign_name", "template_code", "template_param", "endpoint"):
+    for key in (
+        "access_key_id",
+        "access_key_secret",
+        "sign_name",
+        "template_code",
+        "template_param",
+        "endpoint",
+    ):
         raw_value = raw_sms_login.get(key)
         if raw_value is None:
             raw_value = raw_aliyun.get(key)
@@ -832,10 +891,18 @@ def normalize_sms_login(raw_sms_login: Any) -> dict[str, Any] | None:
 
     if enabled:
         if not allowed_phones:
-            raise ValueError("`sms_login.allowed_phones` must contain at least one phone.")
-        missing_fields = [key for key in ("sign_name", "template_code", "template_param") if not aliyun[key]]
+            raise ValueError(
+                "`sms_login.allowed_phones` must contain at least one phone."
+            )
+        missing_fields = [
+            key
+            for key in ("sign_name", "template_code", "template_param")
+            if not aliyun[key]
+        ]
         if missing_fields:
-            raise ValueError(f"`sms_login.aliyun` missing fields: {', '.join(missing_fields)}")
+            raise ValueError(
+                f"`sms_login.aliyun` missing fields: {', '.join(missing_fields)}"
+            )
 
     return {
         "enabled": enabled,
@@ -881,12 +948,16 @@ def _get_sms_runtime_state(phone: str) -> dict[str, Any]:
 
 
 def generate_sms_code() -> str:
-    return f"{secrets.randbelow(10 ** SMS_CODE_LENGTH):0{SMS_CODE_LENGTH}d}"
+    return f"{secrets.randbelow(10**SMS_CODE_LENGTH):0{SMS_CODE_LENGTH}d}"
 
 
-def render_sms_template_param(raw_template_param: str, code: str, ttl_seconds: int) -> str:
+def render_sms_template_param(
+    raw_template_param: str, code: str, ttl_seconds: int
+) -> str:
     ttl_minutes = max(1, (ttl_seconds + 59) // 60)
-    rendered = raw_template_param.replace("##code##", code).replace("##min##", str(ttl_minutes))
+    rendered = raw_template_param.replace("##code##", code).replace(
+        "##min##", str(ttl_minutes)
+    )
     try:
         data = json.loads(rendered)
     except json.JSONDecodeError:
@@ -895,7 +966,9 @@ def render_sms_template_param(raw_template_param: str, code: str, ttl_seconds: i
         return rendered
     if "code" not in data:
         data["code"] = code
-    if "min" in data and (not str(data.get("min", "")).strip() or str(data.get("min")) == "##min##"):
+    if "min" in data and (
+        not str(data.get("min", "")).strip() or str(data.get("min")) == "##min##"
+    ):
         data["min"] = str(ttl_minutes)
     return json.dumps(data, separators=(",", ":"), ensure_ascii=False)
 
@@ -904,7 +977,10 @@ def map_aliyun_sms_error(message: str, recommend: str = "") -> str:
     lower_message = message.lower()
     if "timed out" in lower_message or "timeout" in lower_message:
         return "阿里云短信服务请求超时，请稍后重试。"
-    if "connection refused" in lower_message or "name or service not known" in lower_message:
+    if (
+        "connection refused" in lower_message
+        or "name or service not known" in lower_message
+    ):
         return "阿里云短信服务连接失败，请检查网络或 endpoint 配置。"
     if (
         "forbidden.nopermission" in lower_message
@@ -912,33 +988,51 @@ def map_aliyun_sms_error(message: str, recommend: str = "") -> str:
         or "code: 403" in lower_message
         or "not authorized" in lower_message
     ):
-        return "阿里云账号无短信发送权限（Dypnsapi）。请为该 AK 开通并授权短信相关权限。"
+        return (
+            "阿里云账号无短信发送权限（Dypnsapi）。请为该 AK 开通并授权短信相关权限。"
+        )
     if recommend:
         return f"阿里云短信请求失败：{message}（{recommend}）"
     return f"Aliyun SMS request failed: {message}"
 
 
-def send_aliyun_sms_code(phone: str, code: str, sms_login: dict[str, Any]) -> dict[str, Any]:
+def send_aliyun_sms_code(
+    phone: str, code: str, sms_login: dict[str, Any]
+) -> dict[str, Any]:
     try:
         from alibabacloud_dypnsapi20170525 import models as dypnsapi_20170525_models
-        from alibabacloud_dypnsapi20170525.client import Client as Dypnsapi20170525Client
+        from alibabacloud_dypnsapi20170525.client import (
+            Client as Dypnsapi20170525Client,
+        )
         from alibabacloud_tea_openapi import models as open_api_models
         from alibabacloud_tea_util import models as util_models
     except ModuleNotFoundError:
-        return {"ok": False, "message": "缺少阿里云短信依赖，请先安装 requirements.txt。"}
+        return {
+            "ok": False,
+            "message": "缺少阿里云短信依赖，请先安装 requirements.txt。",
+        }
 
     aliyun = sms_login.get("aliyun", {})
     sign_name = str(aliyun.get("sign_name", "")).strip()
     template_code = str(aliyun.get("template_code", "")).strip()
     ttl_seconds = int(sms_login.get("code_ttl_seconds", SMS_CODE_TTL_SECONDS))
-    raw_template_param = str(aliyun.get("template_param", "{\"code\":\"##code##\",\"min\":\"##min##\"}")).strip()
-    endpoint = str(aliyun.get("endpoint", "dypnsapi.aliyuncs.com")).strip() or "dypnsapi.aliyuncs.com"
+    raw_template_param = str(
+        aliyun.get("template_param", '{"code":"##code##","min":"##min##"}')
+    ).strip()
+    endpoint = (
+        str(aliyun.get("endpoint", "dypnsapi.aliyuncs.com")).strip()
+        or "dypnsapi.aliyuncs.com"
+    )
     endpoint = endpoint.removeprefix("https://").removeprefix("http://").strip("/")
     template_param = render_sms_template_param(raw_template_param, code, ttl_seconds)
-    access_key_id = str(aliyun.get("access_key_id", "")).strip() or str(os.getenv("ALIBABA_CLOUD_ACCESS_KEY_ID", "")).strip()
-    access_key_secret = str(aliyun.get("access_key_secret", "")).strip() or str(
-        os.getenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "")
-    ).strip()
+    access_key_id = (
+        str(aliyun.get("access_key_id", "")).strip()
+        or str(os.getenv("ALIBABA_CLOUD_ACCESS_KEY_ID", "")).strip()
+    )
+    access_key_secret = (
+        str(aliyun.get("access_key_secret", "")).strip()
+        or str(os.getenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "")).strip()
+    )
     if not access_key_id or not access_key_secret:
         return {
             "ok": False,
@@ -965,7 +1059,9 @@ def send_aliyun_sms_code(phone: str, code: str, sms_login: dict[str, Any]) -> di
         read_timeout=15000,
     )
     try:
-        resp = client.send_sms_verify_code_with_options(send_sms_verify_code_request, runtime)
+        resp = client.send_sms_verify_code_with_options(
+            send_sms_verify_code_request, runtime
+        )
     except Exception as exc:  # noqa: BLE001
         message = str(getattr(exc, "message", str(exc)))
         recommend = ""
@@ -976,15 +1072,23 @@ def send_aliyun_sms_code(phone: str, code: str, sms_login: dict[str, Any]) -> di
 
     body = getattr(resp, "body", None)
     provider_code = str(getattr(body, "code", "") or getattr(body, "Code", "")).strip()
-    provider_message = str(getattr(body, "message", "") or getattr(body, "Message", "")).strip()
-    request_id = str(getattr(body, "request_id", "") or getattr(body, "RequestId", "")).strip()
+    provider_message = str(
+        getattr(body, "message", "") or getattr(body, "Message", "")
+    ).strip()
+    request_id = str(
+        getattr(body, "request_id", "") or getattr(body, "RequestId", "")
+    ).strip()
     success_value = getattr(body, "success", None)
     provider_success = bool(success_value) if isinstance(success_value, bool) else False
     if provider_code.upper() == "OK" or provider_success:
         return {"ok": True, "message": "SMS sent.", "request_id": request_id}
 
     message = provider_message or provider_code or "Unknown provider error."
-    return {"ok": False, "message": map_aliyun_sms_error(message), "request_id": request_id}
+    return {
+        "ok": False,
+        "message": map_aliyun_sms_error(message),
+        "request_id": request_id,
+    }
 
 
 def login_with_password(username: str, password: str, creds: tuple[str, str]) -> bool:
@@ -993,7 +1097,9 @@ def login_with_password(username: str, password: str, creds: tuple[str, str]) ->
     return bool(user_ok and pass_ok)
 
 
-def login_with_sms(phone: str, code: str, sms_login: dict[str, Any]) -> tuple[bool, str]:
+def login_with_sms(
+    phone: str, code: str, sms_login: dict[str, Any]
+) -> tuple[bool, str]:
     allowed_phones = {str(x) for x in sms_login.get("allowed_phones", []) if str(x)}
     if phone not in allowed_phones:
         return False, "该手机号未被授权登录。"
@@ -1029,7 +1135,9 @@ def login_with_sms(phone: str, code: str, sms_login: dict[str, Any]) -> tuple[bo
         return False, "验证码错误。"
 
 
-def select_servers_by_ids(servers: list[dict[str, Any]], server_ids: list[str]) -> list[dict[str, Any]]:
+def select_servers_by_ids(
+    servers: list[dict[str, Any]], server_ids: list[str]
+) -> list[dict[str, Any]]:
     wanted = {x for x in server_ids if x}
     selected = [s for s in servers if s.get("id") in wanted]
     return selected
@@ -1146,7 +1254,9 @@ def collect_subscription_usage(
         if cached and cached.get("ok"):
             results.append(cached)
             continue
-        stale = read_cached_traffic_result(traffic_cache, server_id, now=now, max_age_seconds=None)
+        stale = read_cached_traffic_result(
+            traffic_cache, server_id, now=now, max_age_seconds=None
+        )
         if stale and stale.get("ok") and config_path is not None:
             stale["traffic_cache_stale"] = True
             used_stale_cache = True
@@ -1159,11 +1269,16 @@ def collect_subscription_usage(
     if stale_servers and config_path is None:
         worker_count = min(4, len(stale_servers))
         with ThreadPoolExecutor(max_workers=worker_count) as executor:
-            futures = {executor.submit(run_server_traffic_check, server): server for server in stale_servers}
+            futures = {
+                executor.submit(run_server_traffic_check, server): server
+                for server in stale_servers
+            }
             for future in as_completed(futures):
                 server = futures[future]
                 server_id = str(server.get("id", "")).strip()
-                server_name = str(server.get("name", "")).strip() or server_id or "unknown"
+                server_name = (
+                    str(server.get("name", "")).strip() or server_id or "unknown"
+                )
                 try:
                     item = future.result()
                 except Exception as exc:  # noqa: BLE001
@@ -1173,13 +1288,17 @@ def collect_subscription_usage(
                     item["traffic_cache_used"] = False
                     item["checked_at"] = format_utc_datetime(now)
                     results.append(item)
-                    traffic_cache[server_id] = build_traffic_cache_entry(item, checked_at=now)
+                    traffic_cache[server_id] = build_traffic_cache_entry(
+                        item, checked_at=now
+                    )
                     updated_cache = True
                     continue
                 message = str(item.get("message", "")).strip() or "流量读取失败"
                 errors.append(f"{server_name}: {message}")
     elif stale_servers and config_path is not None:
-        refresh_server_ids.extend(str(server.get("id", "")).strip() for server in stale_servers)
+        refresh_server_ids.extend(
+            str(server.get("id", "")).strip() for server in stale_servers
+        )
 
     if updated_cache and config_path is not None:
         payload = config if isinstance(config, dict) else load_config(config_path)
@@ -1188,17 +1307,31 @@ def collect_subscription_usage(
 
     refresh_scheduled = False
     if refresh_server_ids and config_path is not None:
-        refresh_scheduled = schedule_traffic_cache_refresh(refresh_server_ids, config_path)
+        refresh_scheduled = schedule_traffic_cache_refresh(
+            refresh_server_ids, config_path
+        )
 
     upload = sum(int(item.get("traffic_tx_bytes", 0) or 0) for item in results)
     download = sum(int(item.get("traffic_rx_bytes", 0) or 0) for item in results)
     used = sum(int(item.get("traffic_total_bytes", 0) or 0) for item in results)
 
-    quota_values = [item.get("traffic_quota_bytes") for item in results if item.get("traffic_quota_bytes") is not None]
-    quota_configured_for_all = len(results) == len(selected) and len(quota_values) == len(selected)
-    total_quota = sum(int(value or 0) for value in quota_values) if quota_values else None
+    quota_values = [
+        item.get("traffic_quota_bytes")
+        for item in results
+        if item.get("traffic_quota_bytes") is not None
+    ]
+    quota_configured_for_all = len(results) == len(selected) and len(
+        quota_values
+    ) == len(selected)
+    total_quota = (
+        sum(int(value or 0) for value in quota_values) if quota_values else None
+    )
     remaining = max(total_quota - used, 0) if total_quota is not None else None
-    percent = round((used / total_quota) * 100, 1) if total_quota and total_quota > 0 else None
+    percent = (
+        round((used / total_quota) * 100, 1)
+        if total_quota and total_quota > 0
+        else None
+    )
     checked_times = []
     for item in results:
         checked_at = parse_subscription_expiry_dt(item.get("checked_at"))
@@ -1210,7 +1343,11 @@ def collect_subscription_usage(
     if expires_dt is not None:
         expire_ts = int(expires_dt.timestamp())
 
-    cycle_labels = {str(item.get("traffic_cycle_label", "")).strip() for item in results if str(item.get("traffic_cycle_label", "")).strip()}
+    cycle_labels = {
+        str(item.get("traffic_cycle_label", "")).strip()
+        for item in results
+        if str(item.get("traffic_cycle_label", "")).strip()
+    }
     return {
         "ok": bool(results),
         "partial": bool(errors),
@@ -1224,14 +1361,20 @@ def collect_subscription_usage(
         "download_display": format_traffic_bytes(download),
         "used_display": format_traffic_bytes(used),
         "total_quota_bytes": total_quota,
-        "total_quota_display": format_traffic_gb(total_quota) if total_quota is not None else "",
+        "total_quota_display": format_traffic_gb(total_quota)
+        if total_quota is not None
+        else "",
         "remaining_bytes": remaining,
-        "remaining_display": format_traffic_gb(remaining) if remaining is not None else "",
+        "remaining_display": format_traffic_gb(remaining)
+        if remaining is not None
+        else "",
         "quota_percent": percent,
         "expire_ts": expire_ts,
         "quota_complete": quota_configured_for_all,
         "traffic_cycle_label": cycle_labels.pop() if len(cycle_labels) == 1 else "",
-        "latest_checked_at": format_utc_datetime(max(checked_times)) if checked_times else "",
+        "latest_checked_at": format_utc_datetime(max(checked_times))
+        if checked_times
+        else "",
         "refresh_scheduled": refresh_scheduled,
         "used_stale_cache": used_stale_cache,
     }
@@ -1262,14 +1405,19 @@ def is_http_header_safe(value: Any) -> bool:
     return True
 
 
-def build_subscription_headers(usage: dict[str, Any], token: str, filename_suffix: str) -> dict[str, str]:
+def build_subscription_headers(
+    usage: dict[str, Any], token: str, filename_suffix: str
+) -> dict[str, str]:
     headers = {
         "profile-update-interval": "24",
-        "content-disposition": f"inline; filename*=UTF-8''{quote(token + filename_suffix)}",
+        "content-disposition": f"attachment; filename*=UTF-8''{quote(token + filename_suffix)}",
+        "profile-web-page-url": "https://panel.shafish.cn",
     }
     if usage.get("ok"):
         headers["X-Subscription-Upload"] = str(int(usage.get("upload_bytes", 0) or 0))
-        headers["X-Subscription-Download"] = str(int(usage.get("download_bytes", 0) or 0))
+        headers["X-Subscription-Download"] = str(
+            int(usage.get("download_bytes", 0) or 0)
+        )
         headers["X-Subscription-Used"] = str(int(usage.get("used_bytes", 0) or 0))
         if usage.get("total_quota_bytes") is not None:
             headers["X-Subscription-Total"] = str(int(usage["total_quota_bytes"]))
@@ -1277,12 +1425,16 @@ def build_subscription_headers(usage: dict[str, Any], token: str, filename_suffi
             headers["X-Subscription-Remaining"] = str(int(usage["remaining_bytes"]))
         if usage.get("quota_percent") is not None:
             headers["X-Subscription-Used-Percent"] = str(usage["quota_percent"])
-        if usage.get("traffic_cycle_label") and is_http_header_safe(usage["traffic_cycle_label"]):
+        if usage.get("traffic_cycle_label") and is_http_header_safe(
+            usage["traffic_cycle_label"]
+        ):
             headers["X-Subscription-Traffic-Cycle"] = str(usage["traffic_cycle_label"])
         if usage.get("partial"):
             headers["X-Subscription-Partial"] = "true"
         if usage.get("latest_checked_at"):
-            headers["X-Subscription-Traffic-Checked-At"] = str(usage["latest_checked_at"])
+            headers["X-Subscription-Traffic-Checked-At"] = str(
+                usage["latest_checked_at"]
+            )
         userinfo = build_subscription_userinfo_header(usage)
         if userinfo:
             headers["Subscription-Userinfo"] = userinfo
@@ -1329,7 +1481,9 @@ def build_clash_subscription_comment_lines(
         if usage.get("traffic_cycle_label"):
             lines.append(f"# traffic_cycle: {usage['traffic_cycle_label']}")
         if usage.get("partial"):
-            lines.append("# traffic_note: 部分节点流量读取失败，当前数据为已成功节点汇总。")
+            lines.append(
+                "# traffic_note: 部分节点流量读取失败，当前数据为已成功节点汇总。"
+            )
         if usage.get("used_stale_cache"):
             lines.append("# traffic_note: 已先返回缓存流量，后台正在刷新最新数据。")
     else:
@@ -1373,7 +1527,9 @@ def build_clash_basic_subscription_yaml(
     proxies = build_clash_proxy_items(selected)
     proxy_names = [item["name"] for item in proxies]
     clash_mode = normalize_clash_mode(clash_template.get("mode"))
-    lines = build_clash_subscription_comment_lines(token, selected, subscription, clash_template, usage, edition="basic")
+    lines = build_clash_subscription_comment_lines(
+        token, selected, subscription, clash_template, usage, edition="basic"
+    )
     lines.extend(
         [
             "",
@@ -1390,7 +1546,7 @@ def build_clash_basic_subscription_yaml(
         [
             "",
             "proxy-groups:",
-            "  - name: \"PROXY\"",
+            '  - name: "PROXY"',
             "    type: select",
             "    proxies:",
         ]
@@ -1400,7 +1556,7 @@ def build_clash_basic_subscription_yaml(
     lines.extend(
         [
             "",
-            "  - name: \"FINAL\"",
+            '  - name: "FINAL"',
             "    type: select",
             "    proxies:",
             "    - PROXY",
@@ -1438,14 +1594,16 @@ def build_clash_subscription_yaml(
     proxy_names = [item["name"] for item in proxies]
     clash_profile = normalize_clash_profile(clash_template.get("profile"))
     clash_mode = normalize_clash_mode(clash_template.get("mode"))
-    lines = build_clash_subscription_comment_lines(token, selected, subscription, clash_template, usage, edition="advanced")
+    lines = build_clash_subscription_comment_lines(
+        token, selected, subscription, clash_template, usage, edition="advanced"
+    )
     lines.extend(build_clash_proxy_lines(proxies))
 
     lines.extend(
         [
             "",
             "proxy-groups:",
-            "  - name: \"PROXY\"",
+            '  - name: "PROXY"',
             "    type: select",
             "    proxies:",
         ]
@@ -1460,91 +1618,91 @@ def build_clash_subscription_yaml(
             "  reject:",
             "    type: http",
             "    behavior: domain",
-            "    url: \"https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/reject.txt\"",
+            '    url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/reject.txt"',
             "    path: ./ruleset/reject.yaml",
             "    interval: 86400",
             "",
             "  icloud:",
             "    type: http",
             "    behavior: domain",
-            "    url: \"https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/icloud.txt\"",
+            '    url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/icloud.txt"',
             "    path: ./ruleset/icloud.yaml",
             "    interval: 86400",
             "",
             "  apple:",
             "    type: http",
             "    behavior: domain",
-            "    url: \"https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/apple.txt\"",
+            '    url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/apple.txt"',
             "    path: ./ruleset/apple.yaml",
             "    interval: 86400",
             "",
             "  google:",
             "    type: http",
             "    behavior: domain",
-            "    url: \"https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/google.txt\"",
+            '    url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/google.txt"',
             "    path: ./ruleset/google.yaml",
             "    interval: 86400",
             "",
             "  proxy:",
             "    type: http",
             "    behavior: domain",
-            "    url: \"https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/proxy.txt\"",
+            '    url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/proxy.txt"',
             "    path: ./ruleset/proxy.yaml",
             "    interval: 86400",
             "",
             "  direct:",
             "    type: http",
             "    behavior: domain",
-            "    url: \"https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/direct.txt\"",
+            '    url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/direct.txt"',
             "    path: ./ruleset/direct.yaml",
             "    interval: 86400",
             "",
             "  private:",
             "    type: http",
             "    behavior: domain",
-            "    url: \"https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/private.txt\"",
+            '    url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/private.txt"',
             "    path: ./ruleset/private.yaml",
             "    interval: 86400",
             "",
             "  gfw:",
             "    type: http",
             "    behavior: domain",
-            "    url: \"https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/gfw.txt\"",
+            '    url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/gfw.txt"',
             "    path: ./ruleset/gfw.yaml",
             "    interval: 86400",
             "",
             "  tld-not-cn:",
             "    type: http",
             "    behavior: domain",
-            "    url: \"https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/tld-not-cn.txt\"",
+            '    url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/tld-not-cn.txt"',
             "    path: ./ruleset/tld-not-cn.yaml",
             "    interval: 86400",
             "",
             "  telegramcidr:",
             "    type: http",
             "    behavior: ipcidr",
-            "    url: \"https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/telegramcidr.txt\"",
+            '    url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/telegramcidr.txt"',
             "    path: ./ruleset/telegramcidr.yaml",
             "    interval: 86400",
             "",
             "  cncidr:",
             "    type: http",
             "    behavior: ipcidr",
-            "    url: \"https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/cncidr.txt\"",
+            '    url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/cncidr.txt"',
             "    path: ./ruleset/cncidr.yaml",
             "    interval: 86400",
             "",
             "  lancidr:",
             "    type: http",
             "    behavior: ipcidr",
-            "    url: \"https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/lancidr.txt\"",
+            '    url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/lancidr.txt"',
             "    path: ./ruleset/lancidr.yaml",
             "    interval: 86400",
             "",
             "  applications:",
             "    type: http",
             "    behavior: classical",
-            "    url: \"https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/applications.txt\"",
+            '    url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/applications.txt"',
             "    path: ./ruleset/applications.yaml",
             "    interval: 86400",
             "",
@@ -1600,7 +1758,9 @@ def is_safe_next(next_url: str) -> bool:
     return True
 
 
-def resolve_subscription_request(token: str) -> tuple[str, dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
+def resolve_subscription_request(
+    token: str,
+) -> tuple[str, dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
     clean_token = normalize_token(token)
     if not clean_token:
         raise ValueError("invalid subscription token: empty token")
@@ -1714,35 +1874,55 @@ def normalize_servers(raw_servers: Any) -> list[dict[str, Any]]:
         name = str(raw_name).strip() if raw_name is not None else server_id
         if not name:
             name = server_id
-        description = str(raw_description).strip() if raw_description is not None else ""
-        command_template = str(raw_command_template).strip() if raw_command_template is not None else ""
-        status_template = str(raw_status_template).strip() if raw_status_template is not None else ""
+        description = (
+            str(raw_description).strip() if raw_description is not None else ""
+        )
+        command_template = (
+            str(raw_command_template).strip()
+            if raw_command_template is not None
+            else ""
+        )
+        status_template = (
+            str(raw_status_template).strip() if raw_status_template is not None else ""
+        )
         ssh_target = str(raw_ssh_target).strip() if raw_ssh_target is not None else ""
         addr = str(raw_addr).strip() if raw_addr is not None else ""
-        trojan_password = str(raw_trojan_password) if raw_trojan_password is not None else ""
+        trojan_password = (
+            str(raw_trojan_password) if raw_trojan_password is not None else ""
+        )
         try:
             vnstat_interface = normalize_vnstat_interface(raw_vnstat_interface)
         except ValueError as exc:
             raise ValueError(f"Server `{server_id}`: {exc}") from exc
         if any(ch.isspace() for ch in trojan_password):
-            raise ValueError(f"Server `{server_id}`: `trojan_password` must not contain whitespace.")
+            raise ValueError(
+                f"Server `{server_id}`: `trojan_password` must not contain whitespace."
+            )
         try:
             current_port = parse_current_port(raw_current_port)
         except ValueError:
-            raise ValueError(f"Server `{server_id}`: `current_port` out of range (1-65535).")
+            raise ValueError(
+                f"Server `{server_id}`: `current_port` out of range (1-65535)."
+            )
         try:
             traffic_cycle_day = parse_traffic_cycle_day(raw_traffic_cycle_day)
         except ValueError as exc:
             raise ValueError(f"Server `{server_id}`: {exc}") from exc
         try:
-            traffic_quota, _traffic_quota_bytes = normalize_traffic_quota(raw_traffic_quota)
+            traffic_quota, _traffic_quota_bytes = normalize_traffic_quota(
+                raw_traffic_quota
+            )
         except ValueError as exc:
             raise ValueError(f"Server `{server_id}`: {exc}") from exc
         if command_template:
             if "$1" not in command_template:
-                raise ValueError(f"Server `{server_id}`: `command_template` must contain `$1`.")
+                raise ValueError(
+                    f"Server `{server_id}`: `command_template` must contain `$1`."
+                )
         elif not ssh_target:
-            raise ValueError(f"Server `{server_id}` must provide `command_template` or `ssh_target`.")
+            raise ValueError(
+                f"Server `{server_id}` must provide `command_template` or `ssh_target`."
+            )
 
         item: dict[str, Any] = {
             "id": server_id,
@@ -1757,7 +1937,9 @@ def normalize_servers(raw_servers: Any) -> list[dict[str, Any]]:
             if ssh_options is None:
                 ssh_options = []
             if not isinstance(ssh_options, list):
-                raise ValueError(f"Server `{server_id}`: `ssh_options` must be an array.")
+                raise ValueError(
+                    f"Server `{server_id}`: `ssh_options` must be an array."
+                )
             item["ssh_options"] = [str(x) for x in ssh_options if str(x).strip()]
         if status_template:
             item["status_command_template"] = status_template
@@ -1796,16 +1978,24 @@ def clean_server_view(item: dict[str, Any]) -> dict[str, Any]:
     name = str(raw_name).strip() if raw_name is not None else ""
     ssh_target = str(raw_target).strip() if raw_target is not None else ""
     command_template = str(raw_template).strip() if raw_template is not None else ""
-    status_template = str(raw_status_template).strip() if raw_status_template is not None else ""
+    status_template = (
+        str(raw_status_template).strip() if raw_status_template is not None else ""
+    )
     description = str(raw_desc).strip() if raw_desc is not None else ""
     addr = str(raw_addr).strip() if raw_addr is not None else ""
-    trojan_password = str(raw_trojan_password) if raw_trojan_password is not None else ""
+    trojan_password = (
+        str(raw_trojan_password) if raw_trojan_password is not None else ""
+    )
     try:
         vnstat_interface = normalize_vnstat_interface(raw_vnstat_interface)
     except ValueError:
         vnstat_interface = ""
     try:
-        traffic_cycle_day = parse_traffic_cycle_day(raw_traffic_cycle_day) if raw_traffic_cycle_day not in (None, "") else None
+        traffic_cycle_day = (
+            parse_traffic_cycle_day(raw_traffic_cycle_day)
+            if raw_traffic_cycle_day not in (None, "")
+            else None
+        )
     except ValueError:
         traffic_cycle_day = None
     try:
@@ -1814,7 +2004,11 @@ def clean_server_view(item: dict[str, Any]) -> dict[str, Any]:
         traffic_quota, traffic_quota_bytes = "", None
     effective_cycle_day = traffic_cycle_day or VNSTAT_DEFAULT_CYCLE_DAY
     try:
-        current_port = parse_current_port(raw_current_port) if raw_current_port is not None else None
+        current_port = (
+            parse_current_port(raw_current_port)
+            if raw_current_port is not None
+            else None
+        )
     except ValueError:
         current_port = None
     return {
@@ -1832,7 +2026,9 @@ def clean_server_view(item: dict[str, Any]) -> dict[str, Any]:
         "traffic_cycle_day": traffic_cycle_day,
         "traffic_cycle_label": describe_traffic_cycle_day(effective_cycle_day),
         "traffic_quota": traffic_quota,
-        "traffic_quota_display": format_traffic_gb(traffic_quota_bytes) if traffic_quota_bytes is not None else "",
+        "traffic_quota_display": format_traffic_gb(traffic_quota_bytes)
+        if traffic_quota_bytes is not None
+        else "",
         "traffic_quota_bytes": traffic_quota_bytes,
         "traffic_quota_configured": traffic_quota_bytes is not None,
     }
@@ -1883,7 +2079,9 @@ def find_ssh_target_index(parts: list[str]) -> int:
     raise ValueError("Cannot parse ssh target from command.")
 
 
-def run_shell_command(cmd: list[str], success_message: str, failed_message: str) -> dict[str, Any]:
+def run_shell_command(
+    cmd: list[str], success_message: str, failed_message: str
+) -> dict[str, Any]:
     try:
         proc = subprocess.run(
             cmd,
@@ -1937,13 +2135,17 @@ def run_switch_command(server: dict[str, Any], port: int) -> dict[str, Any]:
             "stderr": "",
         }
 
-    return run_shell_command(cmd, "Port switched successfully.", "Failed to switch port.")
+    return run_shell_command(
+        cmd, "Port switched successfully.", "Failed to switch port."
+    )
 
 
 def derive_status_command_from_port_template(command_template: str) -> list[str]:
     parts = shlex.split(command_template)
     if not parts or parts[0] != "ssh":
-        raise ValueError("Cannot infer status command from `command_template`; please set `status_command_template`.")
+        raise ValueError(
+            "Cannot infer status command from `command_template`; please set `status_command_template`."
+        )
     target_idx = find_ssh_target_index(parts)
     return [*parts[: target_idx + 1], "trojan", "status"]
 
@@ -1996,7 +2198,9 @@ def build_remote_ssh_command(server: dict[str, Any], remote_command: str) -> lis
             prefix = build_ssh_prefix_from_template(template)
             return [*prefix, remote_command]
 
-    raise ValueError("`vnstat` monitoring requires `ssh_target` or an ssh-based command template.")
+    raise ValueError(
+        "`vnstat` monitoring requires `ssh_target` or an ssh-based command template."
+    )
 
 
 def parse_vnstat_counter(raw_value: Any) -> int | None:
@@ -2066,7 +2270,9 @@ def get_vnstat_interface_name(interface_payload: dict[str, Any]) -> str:
     return ""
 
 
-def select_vnstat_interface(payload: Any, requested_interface: str) -> tuple[dict[str, Any], str]:
+def select_vnstat_interface(
+    payload: Any, requested_interface: str
+) -> tuple[dict[str, Any], str]:
     interfaces = collect_vnstat_interfaces(payload)
     if not interfaces:
         raise ValueError("`vnstat` output does not contain interface data.")
@@ -2080,7 +2286,9 @@ def select_vnstat_interface(payload: Any, requested_interface: str) -> tuple[dic
                 str(interface.get("nick", "")).strip(),
             }
             if requested_interface in candidates:
-                return interface, get_vnstat_interface_name(interface) or requested_interface
+                return interface, get_vnstat_interface_name(
+                    interface
+                ) or requested_interface
         raise ValueError(f"`vnstat` interface not found: {requested_interface}")
 
     if len(interfaces) == 1:
@@ -2115,8 +2323,12 @@ def get_vnstat_counter_multiplier(payload: Any) -> int:
     return 1
 
 
-def parse_vnstat_daily_usage(payload: Any, requested_interface: str) -> tuple[list[dict[str, Any]], str]:
-    interface_payload, interface_name = select_vnstat_interface(payload, requested_interface)
+def parse_vnstat_daily_usage(
+    payload: Any, requested_interface: str
+) -> tuple[list[dict[str, Any]], str]:
+    interface_payload, interface_name = select_vnstat_interface(
+        payload, requested_interface
+    )
     counter_multiplier = get_vnstat_counter_multiplier(payload)
     entries: list[dict[str, Any]] = []
     for raw_entry in get_vnstat_day_bucket(interface_payload):
@@ -2125,12 +2337,16 @@ def parse_vnstat_daily_usage(payload: Any, requested_interface: str) -> tuple[li
         tx = parse_vnstat_counter(raw_entry.get("tx"))
         if day is None or rx is None or tx is None:
             continue
-        entries.append({"date": day, "rx": rx * counter_multiplier, "tx": tx * counter_multiplier})
+        entries.append(
+            {"date": day, "rx": rx * counter_multiplier, "tx": tx * counter_multiplier}
+        )
     entries.sort(key=lambda item: item["date"])
     return entries, interface_name
 
 
-def build_vnstat_command(server: dict[str, Any], include_limit: bool = True) -> list[str]:
+def build_vnstat_command(
+    server: dict[str, Any], include_limit: bool = True
+) -> list[str]:
     vnstat_interface = normalize_vnstat_interface(server.get("vnstat_interface"))
     remote_parts = ["vnstat"]
     if vnstat_interface:
@@ -2152,11 +2368,15 @@ def should_retry_vnstat_without_limit(result: dict[str, Any]) -> bool:
     return 'unknown parameter "0"' in text or "unknown parameter '0'" in text
 
 
-def run_server_traffic_check(server: dict[str, Any], today: datetime.date | None = None) -> dict[str, Any]:
+def run_server_traffic_check(
+    server: dict[str, Any], today: datetime.date | None = None
+) -> dict[str, Any]:
     try:
         cycle_day = parse_traffic_cycle_day(server.get("traffic_cycle_day"))
         requested_interface = normalize_vnstat_interface(server.get("vnstat_interface"))
-        _traffic_quota_display, traffic_quota_bytes = normalize_traffic_quota(server.get("traffic_quota"))
+        _traffic_quota_display, traffic_quota_bytes = normalize_traffic_quota(
+            server.get("traffic_quota")
+        )
     except ValueError as exc:
         return {
             "ok": False,
@@ -2186,21 +2406,33 @@ def run_server_traffic_check(server: dict[str, Any], today: datetime.date | None
             "traffic_period_start": format_date_label(cycle_start),
             "traffic_period_end": format_date_label(cycle_end_display),
             "traffic_period_label": f"{format_date_label(cycle_start)} 至 {format_date_label(cycle_end_display)}",
-            "traffic_quota_display": format_traffic_gb(traffic_quota_bytes) if traffic_quota_bytes is not None else "",
+            "traffic_quota_display": format_traffic_gb(traffic_quota_bytes)
+            if traffic_quota_bytes is not None
+            else "",
             "traffic_quota_bytes": traffic_quota_bytes,
             "traffic_quota_configured": traffic_quota_bytes is not None,
         }
 
-    result = run_shell_command(cmd, "Traffic usage fetched.", "Failed to fetch traffic usage.")
+    result = run_shell_command(
+        cmd, "Traffic usage fetched.", "Failed to fetch traffic usage."
+    )
     if not result["ok"] and should_retry_vnstat_without_limit(result):
         legacy_cmd = build_vnstat_command(server, include_limit=False)
-        result = run_shell_command(legacy_cmd, "Traffic usage fetched.", "Failed to fetch traffic usage.")
+        result = run_shell_command(
+            legacy_cmd, "Traffic usage fetched.", "Failed to fetch traffic usage."
+        )
     result["traffic_cycle_day"] = cycle_day
     result["traffic_cycle_label"] = describe_traffic_cycle_day(cycle_day)
     result["traffic_period_start"] = format_date_label(cycle_start)
     result["traffic_period_end"] = format_date_label(cycle_end_display)
-    result["traffic_period_label"] = f"{format_date_label(cycle_start)} 至 {format_date_label(cycle_end_display)}"
-    result["traffic_quota_display"] = format_traffic_gb(traffic_quota_bytes) if traffic_quota_bytes is not None else ""
+    result["traffic_period_label"] = (
+        f"{format_date_label(cycle_start)} 至 {format_date_label(cycle_end_display)}"
+    )
+    result["traffic_quota_display"] = (
+        format_traffic_gb(traffic_quota_bytes)
+        if traffic_quota_bytes is not None
+        else ""
+    )
     result["traffic_quota_bytes"] = traffic_quota_bytes
     result["traffic_quota_configured"] = traffic_quota_bytes is not None
 
@@ -2236,7 +2468,9 @@ def run_server_traffic_check(server: dict[str, Any], today: datetime.date | None
 
     earliest_date = entries[0]["date"]
     latest_date = entries[-1]["date"]
-    coverage_ok = earliest_date <= cycle_start and latest_date >= min(cycle_end_display, current_day)
+    coverage_ok = earliest_date <= cycle_start and latest_date >= min(
+        cycle_end_display, current_day
+    )
 
     result["interface"] = interface_name
     result["traffic_rx_bytes"] = traffic_rx
@@ -2248,11 +2482,17 @@ def run_server_traffic_check(server: dict[str, Any], today: datetime.date | None
     result["traffic_data_coverage_ok"] = coverage_ok
     if traffic_quota_bytes is not None:
         remaining = max(traffic_quota_bytes - (traffic_rx + traffic_tx), 0)
-        quota_ratio = 0.0 if traffic_quota_bytes <= 0 else min((traffic_rx + traffic_tx) / traffic_quota_bytes, 1.0)
+        quota_ratio = (
+            0.0
+            if traffic_quota_bytes <= 0
+            else min((traffic_rx + traffic_tx) / traffic_quota_bytes, 1.0)
+        )
         result["traffic_remaining_bytes"] = remaining
         result["traffic_remaining_display"] = format_traffic_gb(remaining)
         result["traffic_quota_percent"] = round(quota_ratio * 100, 1)
-        result["traffic_quota_exceeded"] = (traffic_rx + traffic_tx) > traffic_quota_bytes
+        result["traffic_quota_exceeded"] = (
+            traffic_rx + traffic_tx
+        ) > traffic_quota_bytes
     else:
         result["traffic_remaining_bytes"] = None
         result["traffic_remaining_display"] = ""
@@ -2261,7 +2501,9 @@ def run_server_traffic_check(server: dict[str, Any], today: datetime.date | None
     if coverage_ok:
         result["message"] = "Traffic usage fetched."
     else:
-        result["message"] = "Traffic usage fetched, but vnstat daily history may be incomplete for the current cycle."
+        result["message"] = (
+            "Traffic usage fetched, but vnstat daily history may be incomplete for the current cycle."
+        )
     return result
 
 
@@ -2275,12 +2517,28 @@ def parse_service_status(stdout: str, stderr: str) -> dict[str, Any]:
 
     probe = active_line.lower() if active_line else text.lower()
     if "active (running)" in probe:
-        return {"service_ok": True, "service_status": "running", "service_active_line": active_line}
+        return {
+            "service_ok": True,
+            "service_status": "running",
+            "service_active_line": active_line,
+        }
     if "inactive" in probe or "failed" in probe or "dead" in probe:
-        return {"service_ok": False, "service_status": "not-running", "service_active_line": active_line}
+        return {
+            "service_ok": False,
+            "service_status": "not-running",
+            "service_active_line": active_line,
+        }
     if "running" in probe and "not running" not in probe:
-        return {"service_ok": True, "service_status": "running", "service_active_line": active_line}
-    return {"service_ok": False, "service_status": "unknown", "service_active_line": active_line}
+        return {
+            "service_ok": True,
+            "service_status": "running",
+            "service_active_line": active_line,
+        }
+    return {
+        "service_ok": False,
+        "service_status": "unknown",
+        "service_active_line": active_line,
+    }
 
 
 def run_network_check(server: dict[str, Any]) -> dict[str, Any]:
@@ -2391,7 +2649,11 @@ def run_status_command(server: dict[str, Any]) -> dict[str, Any]:
     result["port_message"] = ""
     result.update(run_network_check(server))
     result["ok"] = bool(parsed["service_ok"])
-    result["message"] = "Trojan service is running normally." if result["ok"] else "Trojan service is NOT running normally."
+    result["message"] = (
+        "Trojan service is running normally."
+        if result["ok"]
+        else "Trojan service is NOT running normally."
+    )
     return result
 
 
@@ -2499,12 +2761,20 @@ def send_sms_code():
         send_count = int(state.get("send_count", 0))
         failed_count = int(state.get("failed_count", 0))
         if send_count >= limit or failed_count >= limit:
-            return jsonify({"ok": False, "message": "今日验证码发送次数已用尽，请使用账号密码登录。", "remaining": 0}), 429
+            return jsonify(
+                {
+                    "ok": False,
+                    "message": "今日验证码发送次数已用尽，请使用账号密码登录。",
+                    "remaining": 0,
+                }
+            ), 429
 
     code = generate_sms_code()
     send_result = send_aliyun_sms_code(phone, code, sms_login)
     if not send_result.get("ok"):
-        return jsonify({"ok": False, "message": send_result.get("message", "短信发送失败。")}), 502
+        return jsonify(
+            {"ok": False, "message": send_result.get("message", "短信发送失败。")}
+        ), 502
 
     now_ts = time.time()
     with SMS_LOGIN_RUNTIME_LOCK:
@@ -2512,7 +2782,13 @@ def send_sms_code():
         send_count = int(state.get("send_count", 0))
         failed_count = int(state.get("failed_count", 0))
         if send_count >= limit or failed_count >= limit:
-            return jsonify({"ok": False, "message": "今日验证码发送次数已用尽，请使用账号密码登录。", "remaining": 0}), 429
+            return jsonify(
+                {
+                    "ok": False,
+                    "message": "今日验证码发送次数已用尽，请使用账号密码登录。",
+                    "remaining": 0,
+                }
+            ), 429
         state["send_count"] = send_count + 1
         state["code"] = code
         state["expires_at"] = now_ts + ttl_seconds
@@ -2548,10 +2824,14 @@ def login():
 
     error = None
     requested_mode = str(request.args.get("mode", "")).strip()
-    current_login_type = "sms" if sms_login_enabled and requested_mode == "sms" else "password"
+    current_login_type = (
+        "sms" if sms_login_enabled and requested_mode == "sms" else "password"
+    )
     if request.method == "POST":
         login_type = str(request.form.get("login_type", "password")).strip()
-        current_login_type = "sms" if login_type == "sms" and sms_login_enabled else "password"
+        current_login_type = (
+            "sms" if login_type == "sms" and sms_login_enabled else "password"
+        )
         if login_type == "sms":
             if not sms_login_enabled:
                 error = "未启用手机号登录。"
@@ -2702,7 +2982,11 @@ def network_check():
     data["current_port"] = current_port
     data["quick_ports"] = build_quick_ports(current_port)
     data["server_id"] = server.get("id", "")
-    data["message"] = "Network is reachable." if data.get("network_ok") else data.get("network_message", "Network check failed.")
+    data["message"] = (
+        "Network is reachable."
+        if data.get("network_ok")
+        else data.get("network_message", "Network check failed.")
+    )
     data["ok"] = bool(data.get("network_ok"))
     return jsonify(data), 200
 
@@ -2729,7 +3013,9 @@ def server_traffic():
         checked_at = utc_now()
         result["checked_at"] = format_utc_datetime(checked_at)
         traffic_cache = normalize_traffic_cache(config.get("traffic_cache"))
-        traffic_cache[str(server.get("id", "")).strip()] = build_traffic_cache_entry(result, checked_at=checked_at)
+        traffic_cache[str(server.get("id", "")).strip()] = build_traffic_cache_entry(
+            result, checked_at=checked_at
+        )
         config["traffic_cache"] = traffic_cache
         try:
             save_config(config_path, config)
@@ -2772,8 +3058,12 @@ def subscription_link():
 
     selected = select_servers_by_ids(servers, server_ids)
     if len(selected) != len(server_ids):
-        missing = [x for x in server_ids if x not in {str(s.get("id", "")) for s in selected}]
-        return jsonify({"ok": False, "message": f"Server not found: {', '.join(missing)}"}), 400
+        missing = [
+            x for x in server_ids if x not in {str(s.get("id", "")) for s in selected}
+        ]
+        return jsonify(
+            {"ok": False, "message": f"Server not found: {', '.join(missing)}"}
+        ), 400
 
     try:
         links = build_subscription_links(selected)
@@ -2796,8 +3086,12 @@ def subscription_link():
     except Exception as exc:  # noqa: BLE001
         return jsonify({"ok": False, "message": f"Save failed: {exc}"}), 500
 
-    sub_url = request.host_url.rstrip("/") + url_for("subscription_content", token=token)
-    clash_url = request.host_url.rstrip("/") + url_for("clash_subscription_content", token=token)
+    sub_url = request.host_url.rstrip("/") + url_for(
+        "subscription_content", token=token
+    )
+    clash_url = request.host_url.rstrip("/") + url_for(
+        "clash_subscription_content", token=token
+    )
     message = "Subscription URL generated."
     if overwritten:
         message = "Token existed. Replaced with latest server selection."
@@ -2848,12 +3142,21 @@ def list_subscriptions():
     current_time = utc_now()
     ordered_tokens = sorted(
         subscriptions.keys(),
-        key=lambda token: (is_subscription_expired(subscriptions[token], now=current_time), token),
+        key=lambda token: (
+            is_subscription_expired(subscriptions[token], now=current_time),
+            token,
+        ),
     )
     for token in ordered_tokens:
         subscription = subscriptions[token]
-        sub_url = request.host_url.rstrip("/") + url_for("subscription_content", token=token)
-        out.append(clean_subscription_view(token, subscription, server_name_by_id, sub_url, config=config))
+        sub_url = request.host_url.rstrip("/") + url_for(
+            "subscription_content", token=token
+        )
+        out.append(
+            clean_subscription_view(
+                token, subscription, server_name_by_id, sub_url, config=config
+            )
+        )
 
     return jsonify(
         {
@@ -2862,7 +3165,9 @@ def list_subscriptions():
             "count": len(out),
             "clash_template": {
                 "profile": config["clash_template"]["profile"],
-                "profile_label": describe_clash_profile(config["clash_template"]["profile"]),
+                "profile_label": describe_clash_profile(
+                    config["clash_template"]["profile"]
+                ),
                 "mode": config["clash_template"]["mode"],
                 "mode_label": describe_clash_mode(config["clash_template"]["mode"]),
             },
@@ -2951,7 +3256,9 @@ def delete_subscription(token: str):
 @app.get("/sub/<token>")
 def subscription_content(token: str):
     try:
-        clean_token, _config, _subscription, selected = resolve_subscription_request(token)
+        clean_token, _config, _subscription, selected = resolve_subscription_request(
+            token
+        )
     except Exception as exc:  # noqa: BLE001
         if isinstance(exc, ValueError):
             return Response(f"{exc}\n", mimetype="text/plain"), 400
@@ -2970,12 +3277,18 @@ def subscription_content(token: str):
 
     plain = "\n".join(links)
     encoded = base64.b64encode(plain.encode("utf-8")).decode("utf-8")
-    return Response(encoded + "\n", mimetype="text/plain")
+    headers = {
+        "Content-Disposition": f'attachment; filename="{clean_token}"',
+        "profile-web-page-url": "https://panel.shafish.cn",
+    }
+    return Response(encoded + "\n", mimetype="text/plain", headers=headers)
 
 
 def respond_clash_subscription(token: str, edition: str) -> Response:
     try:
-        clean_token, config, subscription, selected = resolve_subscription_request(token)
+        clean_token, config, subscription, selected = resolve_subscription_request(
+            token
+        )
     except Exception as exc:  # noqa: BLE001
         if isinstance(exc, ValueError):
             return Response(f"{exc}\n", mimetype="text/plain"), 400
@@ -2988,7 +3301,9 @@ def respond_clash_subscription(token: str, edition: str) -> Response:
         return Response(f"config error: {exc}\n", mimetype="text/plain"), 500
 
     try:
-        clash_template = get_effective_clash_template(config=config, subscription=subscription)
+        clash_template = get_effective_clash_template(
+            config=config, subscription=subscription
+        )
         usage = collect_subscription_usage(
             selected,
             subscription.get("expires_at"),
@@ -2996,9 +3311,13 @@ def respond_clash_subscription(token: str, edition: str) -> Response:
             config_path=get_config_path(),
             config=config,
         )
-        payload = build_clash_subscription_yaml(clean_token, selected, subscription, clash_template, usage)
+        payload = build_clash_subscription_yaml(
+            clean_token, selected, subscription, clash_template, usage
+        )
     except ValueError as exc:
-        return Response(f"build clash subscription failed: {exc}\n", mimetype="text/plain"), 400
+        return Response(
+            f"build clash subscription failed: {exc}\n", mimetype="text/plain"
+        ), 400
 
     headers = build_subscription_headers(usage, clean_token, ".yaml")
     return Response(payload, mimetype="text/yaml", headers=headers)
@@ -3057,7 +3376,14 @@ def put_servers():
         return jsonify({"ok": False, "message": f"Save failed: {exc}"}), 500
 
     clean_servers = [clean_server_view(item) for item in normalized]
-    return jsonify({"ok": True, "message": "Servers saved.", "servers": clean_servers, "auth": clean_auth_view(config)})
+    return jsonify(
+        {
+            "ok": True,
+            "message": "Servers saved.",
+            "servers": clean_servers,
+            "auth": clean_auth_view(config),
+        }
+    )
 
 
 @app.post("/api/trojan-status-all")
@@ -3088,7 +3414,9 @@ def trojan_status_all():
     results: list[dict[str, Any]] = []
     worker_count = min(8, len(selected))
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
-        futures = {executor.submit(run_status_command, server): server for server in selected}
+        futures = {
+            executor.submit(run_status_command, server): server for server in selected
+        }
         for future in as_completed(futures):
             server = futures[future]
             server_id = server.get("id", "")
@@ -3116,7 +3444,9 @@ def trojan_status_all():
     ok_count = sum(1 for x in results if x.get("ok"))
     summary = f"{ok_count}/{len(results)} servers are running normally."
     http_code = 200 if ok_count == len(results) else 207
-    return jsonify({"ok": ok_count == len(results), "summary": summary, "results": results}), http_code
+    return jsonify(
+        {"ok": ok_count == len(results), "summary": summary, "results": results}
+    ), http_code
 
 
 if __name__ == "__main__":
